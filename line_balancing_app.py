@@ -13,6 +13,8 @@ if skill_file and ob_file:
     # 📖 Read uploaded files
     skill_df = pd.read_excel(skill_file)
     ob_df = pd.read_excel(ob_file)
+    ob_df.columns = ob_df.columns.str.strip().str.upper()
+    st.write("OB Columns:", ob_df.columns.tolist())
     ob_df.columns = ob_df.columns.str.strip()  # removes leading/trailing spaces
 
 
