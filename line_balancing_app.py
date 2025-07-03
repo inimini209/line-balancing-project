@@ -12,6 +12,7 @@ ob_file = st.sidebar.file_uploader("Upload Operation Bulletin (.xlsx)", type="xl
 
 if skill_file and ob_file:
     skill_df = pd.read_excel(skill_file)
+    skill_df.columns = [col.strip().upper() for col in skill_df.columns]
     ob_df = pd.read_excel(ob_file)
 
     # Clean Operation Bulletin columns
