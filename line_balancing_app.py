@@ -10,9 +10,8 @@ skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
 ob_file    = st.sidebar.file_uploader("Operation Bulletin (.xlsx)", type="xlsx")
 
 if skill_file and ob_file:
-    # 1) Read Skill Matrix
+    # 1) Read and clean Skill Matrix
     skill_df = pd.read_excel(skill_file)
-    # Clean Skill Matrix headers
     skill_df.columns = (
         skill_df.columns
         .str.replace('\n', ' ', regex=True)
@@ -20,9 +19,8 @@ if skill_file and ob_file:
         .str.upper()
     )
 
-    # 2) Read Operation Bulletin
+    # 2) Read and clean Operation Bulletin
     ob_df = pd.read_excel(ob_file)
-    # Clean OB headers (remove newlines, trim, uppercase)
     ob_df.columns = (
         ob_df.columns
         .str.replace('\n', ' ', regex=True)
@@ -30,31 +28,29 @@ if skill_file and ob_file:
         .str.upper()
     )
 
-    # Preview data
+    # Previews
     st.subheader("Skill Matrix Preview")
     st.dataframe(skill_df.head(), use_container_width=True)
     st.subheader("Operation Bulletin Preview")
     st.dataframe(ob_df.head(), use_container_width=True)
 
-    # 3) Verify required OB columns exist
+    # 3) Verify required columns
     required_ob = {"OPERATION DESCRIPTION", "MACHINE TYPE", "TARGET"}
     if not required_ob.issubset(ob_df.columns):
         st.error(f"OB file must contain columns: {required_ob}")
         st.stop()
-
-    # 4) Verify Skill Matrix has OPERATOR NAME
     if "OPERATOR NAME" not in skill_df.columns:
         st.error("Skill Matrix must contain column: OPERATOR NAME")
         st.stop()
 
-    # 5) Extract line target (same for all operations)
+    # 4) Extract line target
     line_target = ob_df["TARGET"].iloc[0]
 
-    # 6) Allocate operators by highest efficiency for each operation
+    # 5) Allocate operators and calculate outputs
     assignments = []
     for _, row in ob_df.iterrows():
-        op_name   = row["OPERATION DESCRIPTION"]
-        machine   = row["MACHINE TYPE"]
+        op_name = row["OPERATION DESCRIPTION"]
+        machine = row["MACHINE TYPE"]
 
         if op_name in skill_df.columns:
             candidates = skill_df[["OPERATOR NAME", op_name]].dropna()
@@ -79,7 +75,7 @@ if skill_file and ob_file:
 
     result_df = pd.DataFrame(assignments)
 
-    # 7) Rating function
+    # 6) Rating function
     def rate(e):
         if e < 65: return 1
         if e < 75: return 2
@@ -89,7 +85,7 @@ if skill_file and ob_file:
 
     result_df["RATING"] = result_df["EFFICIENCY (%)"].apply(rate)
 
-    # 8) Display in tabs
+    # 7) Display in tabs
     tabs = st.tabs(["📊 Allocation & Output", "⚙️ Operator Ratings", "🛠️ Machine Summary"])
 
     with tabs[0]:
@@ -108,34 +104,8 @@ if skill_file and ob_file:
             result_df
             .groupby("ASSIGNED OPERATOR", dropna=False)
             .agg({
-                "TARGET":           "sum",
-                "ACTUAL OUTPUT":    "sum",
-                "EFFICIENCY (%)":   "mean"
+                "TARGET":          "sum",
+                "ACTUAL OUTPUT":   "sum",
+                "EFFICIENCY (%)":  "mean"
             })
             .reset_index()
-        )
-        op_summary["RATING"] = op_summary["EFFICIENCY (%)"].apply(rate)
-        st.dataframe(
-            op_summary.rename(columns={
-                "ASSIGNED OPERATOR": "OPERATOR",
-                "TARGET":            "TOTAL TARGET",
-                "ACTUAL OUTPUT":     "TOTAL OUTPUT",
-                "EFFICIENCY (%)":    "AVG EFFICIENCY (%)"
-            }),
-            use_container_width=True
-        )
-
-    with tabs[2]:
-        st.header("🛠️ Machine Type Summary")
-        machine_summary = (
-            ob_df["MACHINE TYPE"]
-            .value_counts()
-            .reset_index()
-            .rename(columns={"index": "MACHINE TYPE", "MACHINE TYPE": "OPERATIONS COUNT"})
-        )
-        st.dataframe(machine_summary, use_container_width=True)
-
-else:
-    st.info("👈 Please uplo
-
-            
