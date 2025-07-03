@@ -58,4 +58,11 @@ with tab3:
         st.dataframe(balanced_df)
 
 with tab4:
-    st.header("🛠️ Machi
+    st.header("🛠️ Machine Summary")
+    if ob_file:
+        machine_summary = ob_df['MACHINE TYPE'].value_counts().reset_index()
+        machine_summary.columns = ['MACHINE TYPE', 'QUANTITY NEEDED']
+
+        st.subheader("Number of Machines Needed by Type")
+        st.dataframe(machine_summary)
+
