@@ -21,6 +21,7 @@ with tab1:
     if ob_file:
         ob_df = pd.read_excel(ob_file)
         ob_df.columns = ob_df.columns.str.strip().str.upper()
+        st.write(ob_df.columns.tolist())
         st.subheader("Operation Bulletin Preview")
         st.dataframe(ob_df)
 
