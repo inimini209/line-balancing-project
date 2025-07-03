@@ -48,14 +48,34 @@ with tab2:
         st.dataframe(ob_df[['OPERATION DESCRIPTION', 'TARGET', 'ACTUAL OUTPUT', 'EFFICIENCY (%)', 'RATING']])
 
 with tab3:
-    st.header("📊 Automatic Line Balancing (Prototype)")
+    st.header("📊 Automatic Line Balancing (by Skill Matrix)")
 
     if skill_file and ob_file:
         balanced_df = ob_df[['OPERATION DESCRIPTION', 'MACHINE TYPE']].copy()
-        balanced_df['ASSIGNED OPERATOR'] = ['Operator ' + str(i+1) for i in range(len(balanced_df))]
+        assigned_operators = []
 
-        st.subheader("Operator - Operation Allocation")
+        # Copy of skill matrix for assignment
+        skill_df_copy = skill_df.copy()
+
+        for index, row in balanced_df.iterrows():
+            machine_type = row['MACHINE TYPE']
+
+            # Find available operators with highest skill for this machine type
+            if machine_type in skill_df_copy.columns:
+                best_operator_row = skill_df_copy.loc[skill_df_copy[machine_type].idxmax()]
+                best_operator_name = best_operator_row['OPERATOR NAME']
+                assigned_operators.append(best_operator_name)
+
+                # Remove this operator from availability by setting their skill to -1
+                skill_df_copy.loc[skill_df_copy['OPERATOR NAME'] == best_operator_name, machine_type] = -1
+            else:
+                assigned_operators.append("Not Available")
+
+        balanced_df['ASSIGNED OPERATOR'] = assigned_operators
+
+        st.subheader("Optimal Operator - Operation Allocation")
         st.dataframe(balanced_df)
+
 
 with tab4:
     st.header("🛠️ Machine Summary")
