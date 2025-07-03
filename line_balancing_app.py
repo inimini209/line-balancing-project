@@ -55,7 +55,38 @@ if skill_file and ob_file:
                 operator, efficiency = "NO SKILLED OP", 0
         else:
             operator, efficiency = "COLUMN NOT FOUND", 0
+assigned_operators = set()  # Track already assigned
 
+for _, row in ob_df.iterrows():
+    op_name = row["OPERATION DESCRIPTION"]
+    machine = row["MACHINE TYPE"]
+
+    # Look up candidates not already assigned
+    if op_name in skill_df.columns:
+        # Only consider unassigned operators
+        candidates = skill_df[["OPERATOR NAME", op_name]].dropna()
+        candidates = candidates[~candidates["OPERATOR NAME"].isin(assigned_operators)]
+        if not candidates.empty:
+            best       = candidates.loc[candidates[op_name].idxmax()]
+            operator   = best["OPERATOR NAME"]
+            efficiency = best[op_name]
+            assigned_operators.add(operator)  # Mark as assigned
+        else:
+            operator, efficiency = "NO SKILLED OP", 0
+    else:
+        operator, efficiency = "COLUMN NOT FOUND", 0
+
+    actual_output = (efficiency / 100) * line_target
+    assignments.append({
+        "OPERATION":         op_name,
+        "MACHINE TYPE":      machine,
+        "ASSIGNED OPERATOR": operator,
+        "EFFICIENCY (%)":    efficiency,
+        "TARGET":            line_target,
+        "ACTUAL OUTPUT":     actual_output
+    })
+
+        
         actual_output = (efficiency / 100) * line_target
         assignments.append({
             "OPERATION":         op_name,
