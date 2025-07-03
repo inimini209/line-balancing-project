@@ -4,13 +4,42 @@ import pandas as pd
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
 st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App")
 
+def combine_similar_operations(ob_df, sam_threshold=1.0, keywords=("IRON", "PRESS")):
+    ob_df = ob_df.copy()
+    used_idx = set()
+    combined_rows = []
+    for keyword in keywords:
+        matches = ob_df[
+            ob_df["OPERATION DESCRIPTION"].str.upper().str.contains(keyword)
+            & ((ob_df["MACHINE SAM"].fillna(0) + ob_df["MANUAL SAM"].fillna(0)) < sam_threshold)
+            & (~ob_df.index.isin(used_idx))
+        ]
+        if len(matches) > 1:
+            indices = matches.index
+            used_idx.update(indices)
+            combined_op_name = f"COMBINED {keyword} OPERATIONS"
+            machine_types = ", ".join(matches["MACHINE TYPE"].astype(str).unique())
+            target = matches["TARGET"].iloc[0]
+            sam_machine = matches["MACHINE SAM"].sum()
+            sam_manual = matches["MANUAL SAM"].sum()
+            combined_rows.append({
+                "OPERATION DESCRIPTION": combined_op_name,
+                "MACHINE SAM": sam_machine,
+                "MANUAL SAM": sam_manual,
+                "MACHINE TYPE": machine_types,
+                "TARGET": target
+            })
+    not_combined = ob_df[~ob_df.index.isin(used_idx)]
+    combined_df = pd.DataFrame(combined_rows)
+    new_ob_df = pd.concat([not_combined, combined_df], ignore_index=True)
+    return new_ob_df
+
 # Sidebar — file uploads
 st.sidebar.header("📥 Upload Your Files")
 skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
 ob_file    = st.sidebar.file_uploader("Operation Bulletin (.xlsx)", type="xlsx")
 
 if skill_file and ob_file:
-    # 1) Read and clean Skill Matrix
     skill_df = pd.read_excel(skill_file)
     skill_df.columns = (
         skill_df.columns
@@ -19,7 +48,6 @@ if skill_file and ob_file:
         .str.upper()
     )
 
-    # 2) Read and clean Operation Bulletin
     ob_df = pd.read_excel(ob_file)
     ob_df.columns = (
         ob_df.columns
@@ -30,10 +58,10 @@ if skill_file and ob_file:
 
     st.subheader("Skill Matrix Preview")
     st.dataframe(skill_df.head(), use_container_width=True)
-    st.subheader("Operation Bulletin Preview")
+    st.subheader("Operation Bulletin Preview (before combining)")
     st.dataframe(ob_df.head(), use_container_width=True)
 
-    required_ob = {"OPERATION DESCRIPTION", "MACHINE TYPE", "TARGET"}
+    required_ob = {"OPERATION DESCRIPTION", "MACHINE TYPE", "TARGET", "MACHINE SAM", "MANUAL SAM"}
     if not required_ob.issubset(ob_df.columns):
         st.error(f"OB file must contain columns: {required_ob}")
         st.stop()
@@ -41,9 +69,15 @@ if skill_file and ob_file:
         st.error("Skill Matrix must contain column: OPERATOR NAME")
         st.stop()
 
+    # --- Combine similar/low-SAM operations
+    ob_df = combine_similar_operations(ob_df, sam_threshold=1.0, keywords=("IRON", "PRESS"))
+
+    st.subheader("Operation Bulletin Preview (after combining)")
+    st.dataframe(ob_df.head(), use_container_width=True)
+
     line_target = ob_df["TARGET"].iloc[0]
     assignments = []
-    assigned_operators = set()  # Track already assigned
+    assigned_operators = set()
 
     for _, row in ob_df.iterrows():
         op_name = row["OPERATION DESCRIPTION"]
