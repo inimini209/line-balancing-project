@@ -14,14 +14,13 @@ with tab1:
 
     if skill_file:
         skill_df = pd.read_excel(skill_file)
-        skill_df.columns = skill_df.columns.str.strip().str.upper()
+        skill_df.columns = skill_df.columns.str.replace('\n', ' ', regex=True).str.strip().str.upper()
         st.subheader("Skill Matrix Preview")
         st.dataframe(skill_df)
 
     if ob_file:
         ob_df = pd.read_excel(ob_file)
-        ob_df.columns = ob_df.columns.str.strip().str.upper()
-        st.write(ob_df.columns.tolist())
+        ob_df.columns = ob_df.columns.str.replace('\n', ' ', regex=True).str.strip().str.upper()
         st.subheader("Operation Bulletin Preview")
         st.dataframe(ob_df)
 
@@ -52,19 +51,11 @@ with tab3:
     st.header("📊 Automatic Line Balancing (Prototype)")
 
     if skill_file and ob_file:
-        # For now, basic matching: same number of operators as operations
-        balanced_df = ob_df[['OPERATION DESCRIPTION', 'MACHINE\nTYPE']].copy()
+        balanced_df = ob_df[['OPERATION DESCRIPTION', 'MACHINE TYPE']].copy()
         balanced_df['ASSIGNED OPERATOR'] = ['Operator ' + str(i+1) for i in range(len(balanced_df))]
 
         st.subheader("Operator - Operation Allocation")
         st.dataframe(balanced_df)
 
 with tab4:
-    st.header("🛠️ Machine Summary")
-
-    if ob_file:
-        machine_summary = ob_df['MACHINE TYPE'].value_counts().reset_index()
-        machine_summary.columns = ['MACHINE TYPE', 'QUANTITY NEEDED']
-
-        st.subheader("Number of Machines Needed by Type")
-        st.dataframe(machine_summary)
+    st.header("🛠️ Machi
