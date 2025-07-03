@@ -1,67 +1,42 @@
 import streamlit as st
 import pandas as pd
 
-st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App")
+st.title("🧵 Dynamic Line Balancing & Operator Efficiency Assignment")
 
-# Upload Skill Matrix
+# Upload files
 skill_file = st.file_uploader("📥 Upload Skill Matrix (.xlsx)", type="xlsx")
-
-# Upload Operation Bulletin
 ob_file = st.file_uploader("📥 Upload Operation Bulletin (.xlsx)", type="xlsx")
 
 if skill_file and ob_file:
-
     # Read and clean Skill Matrix
     skill_df = pd.read_excel(skill_file)
-    skill_df.columns = [col.strip().upper() for col in skill_df.columns]
-    st.subheader("Skill Matrix Columns:")
-    st.write(skill_df.columns.tolist())
+    skill_df.columns = [str(col).strip().upper() for col in skill_df.columns]
+    skill_df = skill_df.dropna(how='all', axis=1).dropna(how='all', axis=0)
 
     # Read and clean Operation Bulletin
     ob_df = pd.read_excel(ob_file)
-    ob_df.columns = [col.strip().upper() for col in ob_df.columns]
-    st.subheader("Operation Bulletin Columns:")
-    st.write(ob_df.columns.tolist())
+    ob_df.columns = [str(col).strip().upper() for col in ob_df.columns]
+    ob_df = ob_df.dropna(how='all', axis=1).dropna(how='all', axis=0)
 
     try:
-        # Operator list
-        operators = skill_df["OPERATOR NAME"].tolist()
+        # Calculate average efficiency for each operator
+        operator_col = 'OPERATOR NAME'
+        skill_cols = skill_df.columns[3:]  # Skip S.NO., OPERATOR NAME, CARD NO
+        operator_eff = skill_df.set_index(operator_col)[skill_cols].apply(pd.to_numeric, errors='coerce').mean(axis=1)
+        operator_eff = operator_eff.dropna().sort_values(ascending=False)
 
-        st.header("⚙️ Operator Efficiency & Ratings")
+        # Assign operators to operations by descending efficiency
+        assigned_ops = operator_eff.index.tolist()
+        num_ops = len(assigned_ops)
+        ob_df['ASSIGNED OPERATOR'] = [assigned_ops[i % num_ops] for i in range(len(ob_df))]
+        ob_df['OPERATOR EFFICIENCY'] = [operator_eff.get(op, 0) for op in ob_df['ASSIGNED OPERATOR']]
 
-        # Assuming 'ACTUAL OUTPUT' and 'TARGET OUTPUT' columns exist in OB
-        ob_df["EFFICIENCY (%)"] = (ob_df["ACTUAL OUTPUT"] / ob_df["TARGET OUTPUT"]) * 100
+        # Calculate actual output
+        ob_df['TARGET OUTPUT'] = pd.to_numeric(ob_df['TARGET'], errors='coerce')
+        ob_df['ACTUAL OUTPUT'] = ob_df['TARGET OUTPUT'] * (ob_df['OPERATOR EFFICIENCY'] / 100)
 
-        def assign_rating(eff):
-            if eff < 65:
-                return 1
-            elif eff < 75:
-                return 2
-            elif eff < 85:
-                return 3
-            elif eff < 95:
-                return 4
-            else:
-                return 5
-
-        ob_df["RATING"] = ob_df["EFFICIENCY (%)"].apply(assign_rating)
-
-        st.dataframe(ob_df[["OPERATION DESCRIPTION", "ACTUAL OUTPUT", "TARGET OUTPUT", "EFFICIENCY (%)", "RATING"]])
-
-        st.header("📊 Line Balancing (Sample)")
-
-        # Simple assignment of operators to operations (example — replace with your logic)
-        balanced_df = ob_df[["OPERATION DESCRIPTION", "MACHINE TYPE"]].copy()
-        balanced_df["ASSIGNED OPERATOR"] = [operators[i % len(operators)] for i in range(len(balanced_df))]
-
-        st.dataframe(balanced_df)
-
-        st.header("🛠️ Machine Summary")
-
-        machine_summary = ob_df["MACHINE TYPE"].value_counts().reset_index()
-        machine_summary.columns = ["MACHINE TYPE", "QUANTITY NEEDED"]
-
-        st.dataframe(machine_summary)
+        st.header("⚙️ Operator Assignment and Actual Output")
+        st.dataframe(ob_df[['OPERATION DESCRIPTION', 'ASSIGNED OPERATOR', 'TARGET OUTPUT', 'OPERATOR EFFICIENCY', 'ACTUAL OUTPUT']])
 
     except KeyError as e:
         st.error(f"Missing expected column: {e}")
