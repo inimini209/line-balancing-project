@@ -10,6 +10,7 @@ skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
 ob_file    = st.sidebar.file_uploader("Operation Bulletin (.xlsx)", type="xlsx")
 
 if skill_file and ob_file:
+    # 1) Read and clean Skill Matrix
     skill_df = pd.read_excel(skill_file)
     skill_df.columns = (
         skill_df.columns
@@ -18,6 +19,7 @@ if skill_file and ob_file:
         .str.upper()
     )
 
+    # 2) Read and clean Operation Bulletin
     ob_df = pd.read_excel(ob_file)
     ob_df.columns = (
         ob_df.columns
@@ -41,52 +43,25 @@ if skill_file and ob_file:
 
     line_target = ob_df["TARGET"].iloc[0]
     assignments = []
+    assigned_operators = set()  # Track already assigned
+
     for _, row in ob_df.iterrows():
         op_name = row["OPERATION DESCRIPTION"]
         machine = row["MACHINE TYPE"]
 
         if op_name in skill_df.columns:
             candidates = skill_df[["OPERATOR NAME", op_name]].dropna()
+            candidates = candidates[~candidates["OPERATOR NAME"].isin(assigned_operators)]
             if not candidates.empty:
                 best       = candidates.loc[candidates[op_name].idxmax()]
                 operator   = best["OPERATOR NAME"]
                 efficiency = best[op_name]
+                assigned_operators.add(operator)
             else:
                 operator, efficiency = "NO SKILLED OP", 0
         else:
             operator, efficiency = "COLUMN NOT FOUND", 0
-assigned_operators = set()  # Track already assigned
 
-for _, row in ob_df.iterrows():
-    op_name = row["OPERATION DESCRIPTION"]
-    machine = row["MACHINE TYPE"]
-
-    # Look up candidates not already assigned
-    if op_name in skill_df.columns:
-        # Only consider unassigned operators
-        candidates = skill_df[["OPERATOR NAME", op_name]].dropna()
-        candidates = candidates[~candidates["OPERATOR NAME"].isin(assigned_operators)]
-        if not candidates.empty:
-            best       = candidates.loc[candidates[op_name].idxmax()]
-            operator   = best["OPERATOR NAME"]
-            efficiency = best[op_name]
-            assigned_operators.add(operator)  # Mark as assigned
-        else:
-            operator, efficiency = "NO SKILLED OP", 0
-    else:
-        operator, efficiency = "COLUMN NOT FOUND", 0
-
-    actual_output = (efficiency / 100) * line_target
-    assignments.append({
-        "OPERATION":         op_name,
-        "MACHINE TYPE":      machine,
-        "ASSIGNED OPERATOR": operator,
-        "EFFICIENCY (%)":    efficiency,
-        "TARGET":            line_target,
-        "ACTUAL OUTPUT":     actual_output
-    })
-
-        
         actual_output = (efficiency / 100) * line_target
         assignments.append({
             "OPERATION":         op_name,
