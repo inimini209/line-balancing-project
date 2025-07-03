@@ -1,88 +1,109 @@
 import streamlit as st
 import pandas as pd
 
-st.title("🧵 Dynamic Line Balancing & Efficiency Rating App")
+st.set_page_config(page_title="Dynamic Line Balancing & Operator Rating App", layout="wide")
 
-# Tabs for sections
-tab1, tab2, tab3, tab4 = st.tabs(["📥 Upload Files", "⚙️ Efficiency & Rating", "📊 Line Balancing", "🛠️ Machine Summary"])
+st.title("🧵 Dynamic Line Balancing & Operator Rating App")
 
-with tab1:
-    st.header("📥 Upload Files")
+# Upload files
+st.sidebar.header("📥 Upload Files")
+skill_file = st.sidebar.file_uploader("Upload Skill Matrix (.xlsx)", type="xlsx")
+ob_file = st.sidebar.file_uploader("Upload Operation Bulletin (.xlsx)", type="xlsx")
 
-    skill_file = st.file_uploader("Upload Skill Matrix (.xlsx)", type=["xlsx"])
-    ob_file = st.file_uploader("Upload Operation Bulletin (.xlsx)", type=["xlsx"])
+if skill_file and ob_file:
+    skill_df = pd.read_excel(skill_file)
+    ob_df = pd.read_excel(ob_file)
 
-    if skill_file:
-        skill_df = pd.read_excel(skill_file)
-        skill_df.columns = skill_df.columns.str.replace('\n', ' ', regex=True).str.strip().str.upper()
-        st.subheader("Skill Matrix Preview")
-        st.dataframe(skill_df)
+    # Clean Operation Bulletin columns
+    ob_df.columns = [col.strip() for col in ob_df.columns]
 
-    if ob_file:
-        ob_df = pd.read_excel(ob_file)
-        ob_df.columns = ob_df.columns.str.replace('\n', ' ', regex=True).str.strip().str.upper()
-        st.subheader("Operation Bulletin Preview")
-        st.dataframe(ob_df)
+    st.sidebar.success("✅ Files uploaded successfully!")
 
-with tab2:
-    st.header("⚙️ Efficiency & Rating")
+    tabs = st.tabs(["📊 Line Balancing", "⚙️ Efficiency & Rating", "🛠️ Machine Summary"])
 
-    if ob_file:
-        ob_df['EFFICIENCY (%)'] = (ob_df['ACTUAL OUTPUT'] / ob_df['TARGET']) * 100
+    with tabs[0]:
+        st.header("📊 Line Balancing")
 
-        def get_rating(eff):
-            if eff < 65:
-                return 1
-            elif 65 <= eff < 75:
-                return 2
-            elif 75 <= eff < 85:
-                return 3
-            elif 85 <= eff < 95:
-                return 4
+        # Get operator list
+        operators = skill_df["OPERATOR NAME"].tolist()
+
+        # List of operations in OB
+        operations = ob_df["OPERATION DESCRIPTION"].tolist()
+
+        assignments = []
+        for operation in operations:
+            if operation in skill_df.columns:
+                best_operator = (
+                    skill_df[["OPERATOR NAME", operation]]
+                    .dropna()
+                    .sort_values(by=operation, ascending=False)
+                    .iloc[0]
+                )
+                assignments.append(
+                    {
+                        "OPERATION DESCRIPTION": operation,
+                        "MACHINE TYPE": ob_df.loc[ob_df["OPERATION DESCRIPTION"] == operation, "MACHINE TYPE"].values[0],
+                        "ASSIGNED OPERATOR": best_operator["OPERATOR NAME"],
+                        "EFFICIENCY (%)": best_operator[operation],
+                    }
+                )
             else:
-                return 5
+                assignments.append(
+                    {
+                        "OPERATION DESCRIPTION": operation,
+                        "MACHINE TYPE": ob_df.loc[ob_df["OPERATION DESCRIPTION"] == operation, "MACHINE TYPE"].values[0],
+                        "ASSIGNED OPERATOR": "Not Skilled",
+                        "EFFICIENCY (%)": 0,
+                    }
+                )
 
-        ob_df['RATING'] = ob_df['EFFICIENCY (%)'].apply(get_rating)
+        balanced_df = pd.DataFrame(assignments)
 
-        st.subheader("Efficiency & Rating Results")
-        st.dataframe(ob_df[['OPERATION DESCRIPTION', 'TARGET', 'ACTUAL OUTPUT', 'EFFICIENCY (%)', 'RATING']])
+        st.dataframe(balanced_df, use_container_width=True)
+        st.session_state["balanced_df"] = balanced_df
 
-with tab3:
-    st.header("📊 Automatic Line Balancing (by Skill Matrix)")
+    with tabs[1]:
+        st.header("⚙️ Operator-wise Efficiency & Rating")
 
-    if skill_file and ob_file:
-        balanced_df = ob_df[['OPERATION DESCRIPTION', 'MACHINE TYPE']].copy()
-        assigned_operators = []
+        if "balanced_df" in st.session_state:
+            balanced_df = st.session_state["balanced_df"].copy()
+            target_value = ob_df["TARGET"].iloc[0]
 
-        # Copy of skill matrix for assignment
-        skill_df_copy = skill_df.copy()
+            balanced_df["ACTUAL OUTPUT"] = (balanced_df["EFFICIENCY (%)"] / 100) * target_value
 
-        for index, row in balanced_df.iterrows():
-            machine_type = row['MACHINE TYPE']
+            operator_summary = balanced_df.groupby("ASSIGNED OPERATOR").agg(
+                {
+                    "EFFICIENCY (%)": "mean",
+                    "ACTUAL OUTPUT": "sum",
+                }
+            ).reset_index()
 
-            # Find available operators with highest skill for this machine type
-            if machine_type in skill_df_copy.columns:
-                best_operator_row = skill_df_copy.loc[skill_df_copy[machine_type].idxmax()]
-                best_operator_name = best_operator_row['OPERATOR NAME']
-                assigned_operators.append(best_operator_name)
+            # Rating logic
+            def assign_rating(eff):
+                if eff < 65:
+                    return 1
+                elif 65 <= eff < 75:
+                    return 2
+                elif 75 <= eff < 85:
+                    return 3
+                elif 85 <= eff < 95:
+                    return 4
+                else:
+                    return 5
 
-                # Remove this operator from availability by setting their skill to -1
-                skill_df_copy.loc[skill_df_copy['OPERATOR NAME'] == best_operator_name, machine_type] = -1
-            else:
-                assigned_operators.append("Not Available")
+            operator_summary["RATING"] = operator_summary["EFFICIENCY (%)"].apply(assign_rating)
 
-        balanced_df['ASSIGNED OPERATOR'] = assigned_operators
+            st.dataframe(operator_summary, use_container_width=True)
+        else:
+            st.warning("Please complete Line Balancing first.")
 
-        st.subheader("Optimal Operator - Operation Allocation")
-        st.dataframe(balanced_df)
+    with tabs[2]:
+        st.header("🛠️ Machine Type Summary")
 
+        machine_summary = ob_df["MACHINE TYPE"].value_counts().reset_index()
+        machine_summary.columns = ["MACHINE TYPE", "NUMBER OF OPERATIONS"]
 
-with tab4:
-    st.header("🛠️ Machine Summary")
-    if ob_file:
-        machine_summary = ob_df['MACHINE TYPE'].value_counts().reset_index()
-        machine_summary.columns = ['MACHINE TYPE', 'QUANTITY NEEDED']
+        st.dataframe(machine_summary, use_container_width=True)
 
-        st.subheader("Number of Machines Needed by Type")
-        st.dataframe(machine_summary)
-
+else:
+    st.info("👈 Please upload both Skill Matrix and Operation Bulletin to begin.")
