@@ -53,7 +53,7 @@ with tab3:
 
     if skill_file and ob_file:
         # For now, basic matching: same number of operators as operations
-        balanced_df = ob_df[['OPERATION DESCRIPTION', 'MACHINE TYPE']].copy()
+        balanced_df = ob_df[['OPERATION DESCRIPTION', 'MACHINE\nTYPE']].copy()
         balanced_df['ASSIGNED OPERATOR'] = ['Operator ' + str(i+1) for i in range(len(balanced_df))]
 
         st.subheader("Operator - Operation Allocation")
