@@ -4,7 +4,7 @@ from difflib import get_close_matches
 import io
 
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (with Custom Combine & Delete)")
+st.title("Dynamic Line Balancing & Operator Efficiency Rating App (with Custom Combine & Delete)")
 
 def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
     if keywords is None:
@@ -67,7 +67,7 @@ def color_eff(val):
     else:
         return "background-color: #FF4040; color: white"  # Red
 
-st.sidebar.header("📥 Upload Your Files")
+st.sidebar.header("Upload Your Files")
 skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
 ob_file = st.sidebar.file_uploader("Operation Bulletin (.xlsx)", type="xlsx")
 
@@ -202,10 +202,10 @@ if skill_file and ob_file:
 
     result_df["RATING"] = result_df["EFFICIENCY (%)"].apply(rate)
 
-    tabs = st.tabs(["📊 Allocation & Output", "⚙️ Operator Ratings", "🛠️ Machine Summary", "🔎 Fuzzy Mapping"])
+    tabs = st.tabs(["Allocation & Output", "Operator Ratings", "Machine Summary", "Fuzzy Mapping"])
 
     with tabs[0]:
-        st.header("📊 Operation → Operator → Output")
+        st.header("Operation → Operator → Output")
         st.markdown(
             "<small>Color key: <span style='background:#B6FFB0;'>High</span> "
             "<span style='background:#FFFFB0;'>Medium</span> "
@@ -226,7 +226,7 @@ if skill_file and ob_file:
         )
 
     with tabs[1]:
-        st.header("⚙️ Operator-wise Efficiency & Rating")
+        st.header("Operator-wise Efficiency & Rating")
         op_summary = result_df.groupby("ASSIGNED OPERATOR", dropna=False).agg({
             "TARGET":          "sum",
             "ACTUAL OUTPUT":   "sum",
@@ -244,7 +244,7 @@ if skill_file and ob_file:
         )
 
     with tabs[2]:
-        st.header("🛠️ Machine Type Summary")
+        st.header("Machine Type Summary")
         machine_summary = ob_df2["MACHINE TYPE"].value_counts().reset_index()
         machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
         machine_summary["TOTAL MACHINES"] = machine_summary["OPERATIONS COUNT"]
@@ -259,7 +259,7 @@ if skill_file and ob_file:
         st.dataframe(machine_summary, use_container_width=True)
 
     with tabs[3]:
-        st.header("🔎 Fuzzy Mapping (OB Operation → Skill Matrix Column)")
+        st.header("Fuzzy Mapping (OB Operation → Skill Matrix Column)")
         for ob_op, match in FUZZY_LIST:
             st.write(f"**{ob_op}** → `{match}`")
 
@@ -330,5 +330,5 @@ if skill_file and ob_file:
         st.dataframe(ob_df2, use_container_width=True)
 
 else:
-    st.info("👈 Please upload both the Skill Matrix and Operation Bulletin files.")
+    st.info("Please upload both the Skill Matrix and Operation Bulletin files.")
 
