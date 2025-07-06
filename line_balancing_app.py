@@ -6,7 +6,6 @@ st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
 st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (with Fuzzy Mapping & Floaters)")
 
 def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
-    # keywords: tuple/list of grouping words
     if keywords is None:
         keywords = ("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
     ob_df = ob_df.copy()
@@ -84,7 +83,7 @@ if skill_file and ob_file:
             else:
                 FUZZY_LIST.append((op, "NO SUGGESTION"))
 
-    # --- Combine similar/low-SAM operations, with more keywords and higher threshold ---
+    # Combine similar/low-SAM operations, with more keywords and higher threshold
     ob_df, combine_map = combine_similar_operations(
         ob_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
     )
@@ -192,4 +191,25 @@ if skill_file and ob_file:
         }).reset_index()
         op_summary["RATING"] = op_summary["EFFICIENCY (%)"].apply(rate)
         st.dataframe(
-            op_summary.re_
+            op_summary.rename(columns={
+                "ASSIGNED OPERATOR": "OPERATOR",
+                "TARGET":            "TOTAL TARGET",
+                "ACTUAL OUTPUT":     "TOTAL OUTPUT",
+                "EFFICIENCY (%)":    "AVG EFFICIENCY (%)"
+            }),
+            use_container_width=True
+        )
+
+    with tabs[2]:
+        st.header("🛠️ Machine Type Summary")
+        machine_summary = ob_df["MACHINE TYPE"].value_counts().reset_index()
+        machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
+        st.dataframe(machine_summary, use_container_width=True)
+
+    with tabs[3]:
+        st.header("🔎 Fuzzy Mapping (OB Operation → Skill Matrix Column)")
+        for ob_op, match in FUZZY_LIST:
+            st.write(f"**{ob_op}** → `{match}`")
+
+else:
+    st.info("👈 Please upload both the Skill Matrix and Operation Bulletin files.")
