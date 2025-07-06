@@ -101,22 +101,40 @@ if skill_file and ob_file:
             else:
                 FUZZY_LIST.append((op, "NO SUGGESTION"))
 
-    # -- Machine/combine tab state
+    # Session state for manually and automatically combined operations
     if "custom_combined" not in st.session_state:
         st.session_state["custom_combined"] = []
-    if "ob_df_working" not in st.session_state:
-        st.session_state["ob_df_working"], combine_map = combine_similar_operations(
-            ob_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
-        )
-    else:
+    if "auto_combined_deleted" not in st.session_state:
+        st.session_state["auto_combined_deleted"] = set()
+    if "ob_df_working" not in st.session_state or st.session_state.get("reset_ob_working", False):
+        # always re-calculate combine_map so that it's accurate after deletion
+        ob_base_df = ob_df.copy()
+        # Remove previously deleted auto combined operations
+        # So, first do the initial combine
         base_df, combine_map = combine_similar_operations(
-            ob_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
+            ob_base_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
         )
+        # Then, remove the deleted combined operations and re-add their underlying operations
+        for del_combo in st.session_state["auto_combined_deleted"]:
+            if del_combo in combine_map:
+                # Remove this combined row
+                base_df = base_df[base_df["OPERATION DESCRIPTION"] != del_combo]
+                # Re-add originals
+                orig_ops = combine_map[del_combo]
+                orig_rows = ob_base_df[ob_base_df["OPERATION DESCRIPTION"].isin(orig_ops)]
+                base_df = pd.concat([base_df, orig_rows], ignore_index=True)
+                del combine_map[del_combo]
+        # Now also apply any manual combinations
         working_df = base_df.copy()
         for combo in st.session_state["custom_combined"]:
             working_df = working_df[~working_df["OPERATION DESCRIPTION"].isin(combo["ops"])]
             working_df = pd.concat([working_df, pd.DataFrame([combo["row"]])], ignore_index=True)
         st.session_state["ob_df_working"] = working_df
+        st.session_state["combine_map"] = combine_map
+        st.session_state["reset_ob_working"] = False
+    else:
+        combine_map = st.session_state["combine_map"]
+        working_df = st.session_state["ob_df_working"]
 
     ob_df2 = st.session_state["ob_df_working"]
 
@@ -131,8 +149,10 @@ if skill_file and ob_file:
         machine = row["MACHINE TYPE"]
         operator, efficiency = "NO SKILLED OP", 0
 
-        if ob_op_name in combine_map:
-            combined_cols = [OPERATION_MAP.get(c, c) for c in combine_map[ob_op_name]]
+        # Combine map must now be taken from session state!
+        session_combine_map = st.session_state.get("combine_map", {})
+        if ob_op_name in session_combine_map:
+            combined_cols = [OPERATION_MAP.get(c, c) for c in session_combine_map[ob_op_name]]
             effs = []
             for _, op_row in skill_df.iterrows():
                 eff_list = [op_row[c] for c in combined_cols if c in skill_df.columns and not pd.isna(op_row[c])]
@@ -305,6 +325,7 @@ if skill_file and ob_file:
                     "ops": combine_selected,
                     "row": new_row
                 })
+                st.session_state["reset_ob_working"] = True
                 st.success(f"Combined {combine_selected_display} as '{custom_combine_name}' with machine type: {mtype}")
                 st.experimental_rerun()
                 st.stop()
@@ -319,14 +340,28 @@ if skill_file and ob_file:
             if st.button("Delete Selected Combined Operation"):
                 idx = custom_names.index(to_delete)
                 st.session_state["custom_combined"].pop(idx)
+                st.session_state["reset_ob_working"] = True
                 st.success(f"Deleted combined operation: {to_delete}. Underlying operations will now be available for re-combining.")
                 st.experimental_rerun()
                 st.stop()
 
+        # ---- Delete Automatically Combined Operations ----
+        if st.session_state.get("combine_map", {}):
+            st.subheader("Delete an Automatically Combined Operation")
+            auto_names = list(st.session_state["combine_map"].keys())
+            auto_to_delete = st.selectbox("Select an auto-combined operation to delete:", auto_names, key="auto_delete_combo")
+            if st.button("Delete Selected Auto-Combined Operation"):
+                # Add this combined operation to deleted set
+                st.session_state["auto_combined_deleted"].add(auto_to_delete)
+                st.session_state["reset_ob_working"] = True
+                st.success(f"Deleted auto-combined operation: {auto_to_delete}. Underlying operations will now be available for re-combining.")
+                st.experimental_rerun()
+                st.stop()
+
         # ---- Show which operations have been combined ----
-        if combine_map:
+        if st.session_state.get("combine_map", {}):
             st.subheader("Automatically Combined Operations (by keyword & machine type):")
-            for combo_name, ops_list in combine_map.items():
+            for combo_name, ops_list in st.session_state["combine_map"].items():
                 st.markdown(f"**{combo_name}:**<br>{', '.join(ops_list)}", unsafe_allow_html=True)
 
         if st.session_state["custom_combined"]:
