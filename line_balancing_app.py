@@ -8,6 +8,7 @@ def combine_similar_operations(ob_df, sam_threshold=1.0, keywords=("IRON", "PRES
     ob_df = ob_df.copy()
     used_idx = set()
     combined_rows = []
+    combine_map = dict()  # Map combined operation name to list of originals
     for keyword in keywords:
         matches = ob_df[
             ob_df["OPERATION DESCRIPTION"].str.upper().str.contains(keyword)
@@ -29,12 +30,12 @@ def combine_similar_operations(ob_df, sam_threshold=1.0, keywords=("IRON", "PRES
                 "MACHINE TYPE": machine_types,
                 "TARGET": target
             })
+            combine_map[combined_op_name] = matches["OPERATION DESCRIPTION"].tolist()
     not_combined = ob_df[~ob_df.index.isin(used_idx)]
     combined_df = pd.DataFrame(combined_rows)
     new_ob_df = pd.concat([not_combined, combined_df], ignore_index=True)
-    return new_ob_df
+    return new_ob_df, combine_map
 
-# Sidebar — file uploads
 st.sidebar.header("📥 Upload Your Files")
 skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
 ob_file    = st.sidebar.file_uploader("Operation Bulletin (.xlsx)", type="xlsx")
@@ -70,7 +71,9 @@ if skill_file and ob_file:
         st.stop()
 
     # --- Combine similar/low-SAM operations
-    ob_df = combine_similar_operations(ob_df, sam_threshold=1.0, keywords=("IRON", "PRESS"))
+    ob_df, combine_map = combine_similar_operations(
+        ob_df, sam_threshold=1.0, keywords=("IRON", "PRESS")
+    )
 
     st.subheader("Operation Bulletin Preview (after combining)")
     st.dataframe(ob_df.head(), use_container_width=True)
@@ -83,7 +86,24 @@ if skill_file and ob_file:
         op_name = row["OPERATION DESCRIPTION"]
         machine = row["MACHINE TYPE"]
 
-        if op_name in skill_df.columns:
+        # If this is a combined operation, look up best operator based on the best efficiency in any combined operation
+        if op_name in combine_map:
+            combined_cols = combine_map[op_name]
+            effs = []
+            for _, op_row in skill_df.iterrows():
+                eff_list = [op_row[c] for c in combined_cols if c in skill_df.columns and not pd.isna(op_row[c])]
+                if eff_list:
+                    max_eff = max(eff_list)
+                    effs.append((op_row["OPERATOR NAME"], max_eff))
+            # Exclude operators already assigned
+            effs = [t for t in effs if t[0] not in assigned_operators]
+            if effs:
+                operator, efficiency = max(effs, key=lambda x: x[1])
+                assigned_operators.add(operator)
+            else:
+                operator, efficiency = "NO SKILLED OP", 0
+        # Else, assign normally
+        elif op_name in skill_df.columns:
             candidates = skill_df[["OPERATOR NAME", op_name]].dropna()
             candidates = candidates[~candidates["OPERATOR NAME"].isin(assigned_operators)]
             if not candidates.empty:
