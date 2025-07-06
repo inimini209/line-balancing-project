@@ -105,21 +105,16 @@ if skill_file and ob_file:
     if "custom_combined" not in st.session_state:
         st.session_state["custom_combined"] = []
     if "ob_df_working" not in st.session_state:
-        # Start from auto-combined version, then add manual combos
         st.session_state["ob_df_working"], combine_map = combine_similar_operations(
             ob_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
         )
     else:
-        # Always start from file, then add manual combos
         base_df, combine_map = combine_similar_operations(
             ob_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
         )
-        # Remove any custom combined rows if already present
         working_df = base_df.copy()
         for combo in st.session_state["custom_combined"]:
-            # Remove rows for all operations in combo["ops"]
             working_df = working_df[~working_df["OPERATION DESCRIPTION"].isin(combo["ops"])]
-            # Add new combined row
             working_df = pd.concat([working_df, pd.DataFrame([combo["row"]])], ignore_index=True)
         st.session_state["ob_df_working"] = working_df
 
@@ -253,6 +248,14 @@ if skill_file and ob_file:
         machine_summary = ob_df2["MACHINE TYPE"].value_counts().reset_index()
         machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
         machine_summary["TOTAL MACHINES"] = machine_summary["OPERATIONS COUNT"]
+
+        # Add grand total row at bottom
+        total_row = pd.DataFrame({
+            "MACHINE TYPE": ["TOTAL"],
+            "OPERATIONS COUNT": [machine_summary["OPERATIONS COUNT"].sum()],
+            "TOTAL MACHINES": [machine_summary["TOTAL MACHINES"].sum()]
+        })
+        machine_summary = pd.concat([machine_summary, total_row], ignore_index=True)
         st.dataframe(machine_summary, use_container_width=True)
 
     with tabs[3]:
@@ -260,27 +263,39 @@ if skill_file and ob_file:
         for ob_op, match in FUZZY_LIST:
             st.write(f"**{ob_op}** → `{match}`")
 
-        st.subheader("🔄 Manually Combine Operations")
-        all_ops = ob_df2["OPERATION DESCRIPTION"].unique().tolist()
-        combine_selected = st.multiselect(
-            "Select operations to combine (hold Ctrl/Cmd to select multiple):",
-            options=all_ops,
+        st.subheader("🔄 Manually Combine Operations (Same Machine Type Only)")
+        op_options = [
+            f"{op} [{mt}]" for op, mt in zip(ob_df2["OPERATION DESCRIPTION"], ob_df2["MACHINE TYPE"])
+        ]
+        op_map = {f"{op} [{mt}]": op for op, mt in zip(ob_df2["OPERATION DESCRIPTION"], ob_df2["MACHINE TYPE"])}
+        mt_map = {f"{op} [{mt}]": mt for op, mt in zip(ob_df2["OPERATION DESCRIPTION"], ob_df2["MACHINE TYPE"])}
+
+        combine_selected_display = st.multiselect(
+            "Select operations to combine (must have the same machine type):",
+            options=op_options,
             key="combine_ops"
         )
+        combine_selected = [op_map[o] for o in combine_selected_display]
+
         custom_combine_name = st.text_input(
             "Give a name to this combined operation (e.g., 'CUSTOM COMBO 1')",
             key="combine_name"
         )
+
+        valid_selection = True
+        if len(combine_selected_display) > 1:
+            machine_types = {mt_map[o] for o in combine_selected_display}
+            if len(machine_types) > 1:
+                valid_selection = False
+                st.error(f"⚠️ Please select operations under the **same machine type** only. You selected: {machine_types}")
+
         if st.button("Combine Selected Operations"):
-            if len(combine_selected) > 1 and custom_combine_name:
-                mtypes = ob_df2[ob_df2["OPERATION DESCRIPTION"].isin(combine_selected)]["MACHINE TYPE"].unique()
-                if len(mtypes) == 1:
-                    mtype = mtypes[0]
-                else:
-                    mtype = ", ".join(mtypes)
-                target = ob_df2[ob_df2["OPERATION DESCRIPTION"].isin(combine_selected)]["TARGET"].iloc[0]
-                sam_machine = ob_df2[ob_df2["OPERATION DESCRIPTION"].isin(combine_selected)]["MACHINE SAM"].sum()
-                sam_manual = ob_df2[ob_df2["OPERATION DESCRIPTION"].isin(combine_selected)]["MANUAL SAM"].sum()
+            if len(combine_selected) > 1 and custom_combine_name and valid_selection:
+                mtype = mt_map[combine_selected_display[0]]
+                subdf = ob_df2[ob_df2["OPERATION DESCRIPTION"].isin(combine_selected)]
+                target = subdf["TARGET"].iloc[0]
+                sam_machine = subdf["MACHINE SAM"].sum()
+                sam_manual = subdf["MANUAL SAM"].sum()
                 new_row = {
                     "OPERATION DESCRIPTION": custom_combine_name,
                     "MACHINE SAM": sam_machine,
@@ -292,10 +307,10 @@ if skill_file and ob_file:
                     "ops": combine_selected,
                     "row": new_row
                 })
-                st.success(f"Combined {combine_selected} as '{custom_combine_name}' with machine type: {mtype}")
+                st.success(f"Combined {combine_selected_display} as '{custom_combine_name}' with machine type: {mtype}")
                 st.experimental_rerun()
             else:
-                st.warning("Select at least two operations and give a name.")
+                st.warning("Select at least two operations (of the same machine type) and give a name.")
 
 else:
     st.info("👈 Please upload both the Skill Matrix and Operation Bulletin files.")
