@@ -4,7 +4,7 @@ from difflib import get_close_matches
 import io
 
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("Line Balancing & Operator Efficiency Rating App")
+st.title("Dynamic Line Balancing & Operator Efficiency Rating App (with Custom Combine & Delete)")
 
 def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
     if keywords is None:
@@ -322,6 +322,19 @@ if skill_file and ob_file:
                 st.success(f"Deleted combined operation: {to_delete}. Underlying operations will now be available for re-combining.")
                 st.experimental_rerun()
                 st.stop()
+
+        # ---- Show which operations have been combined ----
+        if combine_map:
+            st.subheader("Automatically Combined Operations (by keyword & machine type):")
+            for combo_name, ops_list in combine_map.items():
+                st.markdown(f"**{combo_name}:**<br>{', '.join(ops_list)}", unsafe_allow_html=True)
+
+        if st.session_state["custom_combined"]:
+            st.subheader("Manually Combined Operations:")
+            for combo in st.session_state["custom_combined"]:
+                combined_name = combo["row"]["OPERATION DESCRIPTION"]
+                combined_ops = combo["ops"]
+                st.markdown(f"**{combined_name}:**<br>{', '.join(combined_ops)}", unsafe_allow_html=True)
 
         # ---- Show current operations table (after all combining) ----
         st.markdown("### Current Operations List (after all combining/deletion):")
