@@ -247,13 +247,11 @@ if skill_file and ob_file:
         st.header("Machine Type Summary")
         machine_summary = ob_df2["MACHINE TYPE"].value_counts().reset_index()
         machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
-        machine_summary["TOTAL MACHINES"] = machine_summary["OPERATIONS COUNT"]
 
         # Add grand total row at bottom
         total_row = pd.DataFrame({
             "MACHINE TYPE": ["TOTAL"],
-            "OPERATIONS COUNT": [machine_summary["OPERATIONS COUNT"].sum()],
-            "TOTAL MACHINES": [machine_summary["TOTAL MACHINES"].sum()]
+            "OPERATIONS COUNT": [machine_summary["OPERATIONS COUNT"].sum()]
         })
         machine_summary = pd.concat([machine_summary, total_row], ignore_index=True)
         st.dataframe(machine_summary, use_container_width=True)
@@ -263,7 +261,7 @@ if skill_file and ob_file:
         for ob_op, match in FUZZY_LIST:
             st.write(f"**{ob_op}** → `{match}`")
 
-        st.subheader("🔄 Manually Combine Operations (Same Machine Type Only)")
+        st.subheader("Manually Combine Operations (Same Machine Type Only)")
         op_options = [
             f"{op} [{mt}]" for op, mt in zip(ob_df2["OPERATION DESCRIPTION"], ob_df2["MACHINE TYPE"])
         ]
@@ -287,7 +285,7 @@ if skill_file and ob_file:
             machine_types = {mt_map[o] for o in combine_selected_display}
             if len(machine_types) > 1:
                 valid_selection = False
-                st.error(f"⚠️ Please select operations under the **same machine type** only. You selected: {machine_types}")
+                st.error(f"⚠️ Please select operations under the same machine type only. You selected: {machine_types}")
 
         if st.button("Combine Selected Operations"):
             if len(combine_selected) > 1 and custom_combine_name and valid_selection:
@@ -326,9 +324,8 @@ if skill_file and ob_file:
                 st.stop()
 
         # ---- Show current operations table (after all combining) ----
-        st.markdown("### 🗒️ Current Operations List (after all combining/deletion):")
+        st.markdown("### Current Operations List (after all combining/deletion):")
         st.dataframe(ob_df2, use_container_width=True)
 
 else:
     st.info("Please upload both the Skill Matrix and Operation Bulletin files.")
-
