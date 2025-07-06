@@ -4,7 +4,7 @@ from difflib import get_close_matches
 import io
 
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("Dynamic Line Balancing & Operator Efficiency Rating App (with Custom Combine & Delete)")
+st.title("Line Balancing & Operator Efficiency Rating App")
 
 def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
     if keywords is None:
