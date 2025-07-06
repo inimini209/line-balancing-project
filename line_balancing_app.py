@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 from difflib import get_close_matches
+import io
 
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (with Fuzzy Mapping & Floaters)")
+st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (Color-coded + Export)")
 
 def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
     if keywords is None:
@@ -18,7 +19,6 @@ def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
             & ((ob_df["MACHINE SAM"].fillna(0) + ob_df["MANUAL SAM"].fillna(0)) < sam_threshold)
             & (~ob_df.index.isin(used_idx))
         ]
-        # For each unique machine type, only combine if more than 1 with that type and keyword
         for mtype in matches["MACHINE TYPE"].unique():
             m_matches = matches[matches["MACHINE TYPE"] == mtype]
             if len(m_matches) > 1:
@@ -51,6 +51,23 @@ def clean_string(s):
             .strip()
             .upper())
 
+def color_eff(val):
+    """Color code for efficiency"""
+    try:
+        val = float(val)
+    except:
+        return ""
+    if val >= 95:
+        return "background-color: #B6FFB0"   # Green
+    elif val >= 85:
+        return "background-color: #FFFFB0"   # Yellow
+    elif val >= 75:
+        return "background-color: #FFD580"   # Orange
+    elif val >= 65:
+        return "background-color: #FFB0B0"   # Light Red
+    else:
+        return "background-color: #FF4040; color: white"  # Red
+
 st.sidebar.header("📥 Upload Your Files")
 skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
 ob_file = st.sidebar.file_uploader("Operation Bulletin (.xlsx)", type="xlsx")
@@ -71,9 +88,6 @@ if skill_file and ob_file:
         st.error("Skill Matrix must contain column: OPERATOR NAME")
         st.stop()
 
-    # Debug: Show number of rows in OB before combining
-    st.caption(f"Original OB: {len(ob_df)} rows")
-
     # Fuzzy mapping for OB → Skill Matrix
     skill_cols = [col for col in skill_df.columns if col != "OPERATOR NAME"]
     ob_ops = ob_df["OPERATION DESCRIPTION"].unique()
@@ -88,19 +102,9 @@ if skill_file and ob_file:
             else:
                 FUZZY_LIST.append((op, "NO SUGGESTION"))
 
-    # Combine similar/low-SAM operations, only for same machine type
     ob_df, combine_map = combine_similar_operations(
         ob_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
     )
-
-    # Debug: Show number of rows after combining
-    st.caption(f"OB after combining: {len(ob_df)} rows (combined: {len(combine_map)})")
-
-    # Show combined operation mapping for user clarity
-    if combine_map:
-        with st.expander("See which operations were combined"):
-            for comb, ops in combine_map.items():
-                st.write(f"{comb} = {', '.join(ops)}")
 
     line_target = ob_df["TARGET"].iloc[0]
     assignments = []
@@ -111,7 +115,6 @@ if skill_file and ob_file:
         ob_op_name = row["OPERATION DESCRIPTION"]
         skill_col = OPERATION_MAP.get(ob_op_name, ob_op_name)
         machine = row["MACHINE TYPE"]
-
         operator, efficiency = "NO SKILLED OP", 0
 
         if ob_op_name in combine_map:
@@ -122,7 +125,7 @@ if skill_file and ob_file:
                 if eff_list:
                     max_eff = max(eff_list)
                     effs.append((op_row["OPERATOR NAME"], max_eff))
-            effs = [t for t in effs if t[0] not in assigned_operators]
+            effs = [t for t in effs if t[0] not in assigned_operators and pd.notnull(t[1])]
             if effs:
                 operator, efficiency = max(effs, key=lambda x: x[1])
                 assigned_operators.add(operator)
@@ -132,6 +135,8 @@ if skill_file and ob_file:
                     operator = available_floaters[0]
                     efficiency = 55
                     assigned_operators.add(operator)
+                else:
+                    operator, efficiency = "NO SKILLED OP", 55
         elif skill_col in skill_df.columns:
             candidates = skill_df[["OPERATOR NAME", skill_col]].dropna()
             candidates = candidates[~candidates["OPERATOR NAME"].isin(assigned_operators)]
@@ -146,12 +151,16 @@ if skill_file and ob_file:
                     operator = available_floaters[0]
                     efficiency = 55
                     assigned_operators.add(operator)
+                else:
+                    operator, efficiency = "NO SKILLED OP", 55
         else:
             available_floaters = list(floater_candidates - assigned_operators)
             if available_floaters:
                 operator = available_floaters[0]
                 efficiency = 55
                 assigned_operators.add(operator)
+            else:
+                operator, efficiency = "NO SKILLED OP", 55
 
         try:
             eff_float = float(efficiency)
@@ -183,12 +192,25 @@ if skill_file and ob_file:
 
     with tabs[0]:
         st.header("📊 Operation → Operator → Output")
-        st.dataframe(
-            result_df[[
-                "OPERATION", "MACHINE TYPE", "ASSIGNED OPERATOR",
-                "EFFICIENCY (%)", "TARGET", "ACTUAL OUTPUT"
-            ]],
-            use_container_width=True
+        st.markdown(
+            "<small>Color key: <span style='background:#B6FFB0;'>High</span> "
+            "<span style='background:#FFFFB0;'>Medium</span> "
+            "<span style='background:#FFD580;'>Average</span> "
+            "<span style='background:#FFB0B0;'>Low</span> "
+            "<span style='background:#FF4040;color:white;'>Very Low</span></small>", 
+            unsafe_allow_html=True
+        )
+        styled_df = result_df.style.applymap(color_eff, subset=["EFFICIENCY (%)"])
+        st.dataframe(styled_df, use_container_width=True)
+
+        # Download button (Excel)
+        out_buffer = io.BytesIO()
+        result_df.to_excel(out_buffer, index=False)
+        st.download_button(
+            label="⬇️ Download Allocation Table as Excel",
+            data=out_buffer.getvalue(),
+            file_name="operator_allocation.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
     with tabs[1]:
