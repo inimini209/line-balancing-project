@@ -3,13 +3,13 @@ import pandas as pd
 from difflib import get_close_matches
 
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (with Fuzzy Mapping)")
+st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (with Fuzzy Mapping & Floaters)")
 
 def combine_similar_operations(ob_df, sam_threshold=1.0, keywords=("IRON", "PRESS")):
     ob_df = ob_df.copy()
     used_idx = set()
     combined_rows = []
-    combine_map = dict()  # Map combined operation name to list of originals
+    combine_map = dict()
     for keyword in keywords:
         matches = ob_df[
             ob_df["OPERATION DESCRIPTION"].str.upper().str.contains(keyword)
@@ -55,15 +55,9 @@ if skill_file and ob_file:
     skill_df = pd.read_excel(skill_file)
     ob_df = pd.read_excel(ob_file)
 
-    # Clean columns
     skill_df.columns = [clean_string(col) for col in skill_df.columns]
     ob_df.columns = [clean_string(col) for col in ob_df.columns]
     ob_df["OPERATION DESCRIPTION"] = ob_df["OPERATION DESCRIPTION"].apply(clean_string)
-
-    st.subheader("Skill Matrix Columns (cleaned)")
-    st.write(skill_df.columns.tolist())
-    st.subheader("OB Operation Descriptions (cleaned)")
-    st.write(ob_df["OPERATION DESCRIPTION"].unique().tolist())
 
     required_ob = {"OPERATION DESCRIPTION", "MACHINE TYPE", "TARGET", "MACHINE SAM", "MANUAL SAM"}
     if not required_ob.issubset(ob_df.columns):
@@ -73,39 +67,38 @@ if skill_file and ob_file:
         st.error("Skill Matrix must contain column: OPERATOR NAME")
         st.stop()
 
-    # --- Build OPERATION_MAP using fuzzy matching (for operations not matching Skill Matrix columns) ---
+    # Build OPERATION_MAP using fuzzy matching
     skill_cols = [col for col in skill_df.columns if col != "OPERATOR NAME"]
     ob_ops = ob_df["OPERATION DESCRIPTION"].unique()
     OPERATION_MAP = {}
+    FUZZY_LIST = []
     for op in ob_ops:
         if op not in skill_cols:
             suggestions = get_close_matches(op, skill_cols, n=1, cutoff=0.6)
             if suggestions:
                 OPERATION_MAP[op] = suggestions[0]
-    if OPERATION_MAP:
-        st.info("Auto-generated OPERATION_MAP (fuzzy-matched):")
-        st.code(f"OPERATION_MAP = {OPERATION_MAP}", language="python")
+                FUZZY_LIST.append((op, suggestions[0]))
+            else:
+                FUZZY_LIST.append((op, "NO SUGGESTION"))
 
-    # --- Combine similar/low-SAM operations
+    # Combine similar/low-SAM operations
     ob_df, combine_map = combine_similar_operations(
         ob_df, sam_threshold=1.0, keywords=("IRON", "PRESS")
     )
 
-    st.subheader("Operation Bulletin Preview (after combining)")
-    st.dataframe(ob_df.head(), use_container_width=True)
-
     line_target = ob_df["TARGET"].iloc[0]
     assignments = []
     assigned_operators = set()
+    floater_candidates = set(skill_df["OPERATOR NAME"])  # All operators, for floater logic
 
     for _, row in ob_df.iterrows():
         ob_op_name = row["OPERATION DESCRIPTION"]
-
-        # Use mapping if available, else the original name
         skill_col = OPERATION_MAP.get(ob_op_name, ob_op_name)
         machine = row["MACHINE TYPE"]
 
-        # If this is a combined operation, look up best operator based on the best efficiency in any combined operation (apply mapping to combined ops)
+        operator, efficiency = "NO SKILLED OP", 0
+
+        # Combined operation: use mapped columns, then assign highest skill
         if ob_op_name in combine_map:
             combined_cols = [OPERATION_MAP.get(c, c) for c in combine_map[ob_op_name]]
             effs = []
@@ -114,25 +107,60 @@ if skill_file and ob_file:
                 if eff_list:
                     max_eff = max(eff_list)
                     effs.append((op_row["OPERATOR NAME"], max_eff))
+            # Exclude already assigned
             effs = [t for t in effs if t[0] not in assigned_operators]
             if effs:
                 operator, efficiency = max(effs, key=lambda x: x[1])
                 assigned_operators.add(operator)
             else:
-                operator, efficiency = "NO SKILLED OP", 0
-        # Else, assign normally using mapping
+                # FLOATER LOGIC: Assign any not-yet-used operator (even if efficiency is low/zero)
+                available_floaters = list(floater_candidates - assigned_operators)
+                float_eff = []
+                for op_name in available_floaters:
+                    eff_list = []
+                    op_row = skill_df[skill_df["OPERATOR NAME"] == op_name]
+                    if not op_row.empty:
+                        op_row = op_row.iloc[0]
+                        for c in combined_cols:
+                            if c in skill_df.columns and not pd.isna(op_row[c]):
+                                eff_list.append(op_row[c])
+                        if eff_list:
+                            float_eff.append((op_name, max(eff_list)))
+                        else:
+                            float_eff.append((op_name, 0))
+                if float_eff:
+                    operator, efficiency = max(float_eff, key=lambda x: x[1])
+                    assigned_operators.add(operator)
+                # If still none, will remain as "NO SKILLED OP", 0
+
         elif skill_col in skill_df.columns:
             candidates = skill_df[["OPERATOR NAME", skill_col]].dropna()
             candidates = candidates[~candidates["OPERATOR NAME"].isin(assigned_operators)]
             if not candidates.empty:
-                best       = candidates.loc[candidates[skill_col].idxmax()]
-                operator   = best["OPERATOR NAME"]
+                best = candidates.loc[candidates[skill_col].idxmax()]
+                operator = best["OPERATOR NAME"]
                 efficiency = best[skill_col]
                 assigned_operators.add(operator)
             else:
-                operator, efficiency = "NO SKILLED OP", 0
+                # FLOATER LOGIC: Assign any not-yet-used operator, even if efficiency is low/zero
+                available_floaters = list(floater_candidates - assigned_operators)
+                float_eff = []
+                for op_name in available_floaters:
+                    op_row = skill_df[skill_df["OPERATOR NAME"] == op_name]
+                    if not op_row.empty and not pd.isna(op_row.iloc[0][skill_col]):
+                        float_eff.append((op_name, op_row.iloc[0][skill_col]))
+                    else:
+                        float_eff.append((op_name, 0))
+                if float_eff:
+                    operator, efficiency = max(float_eff, key=lambda x: x[1])
+                    assigned_operators.add(operator)
         else:
-            operator, efficiency = "COLUMN NOT FOUND", 0
+            # Still assign a floater if possible
+            available_floaters = list(floater_candidates - assigned_operators)
+            if available_floaters:
+                operator = available_floaters[0]
+                efficiency = 0
+                assigned_operators.add(operator)
 
         actual_output = (efficiency / 100) * line_target
         assignments.append({
@@ -146,8 +174,6 @@ if skill_file and ob_file:
 
     result_df = pd.DataFrame(assignments)
 
-    # No warning for unassigned operators!
-
     def rate(e):
         if e < 65: return 1
         if e < 75: return 2
@@ -157,7 +183,7 @@ if skill_file and ob_file:
 
     result_df["RATING"] = result_df["EFFICIENCY (%)"].apply(rate)
 
-    tabs = st.tabs(["📊 Allocation & Output", "⚙️ Operator Ratings", "🛠️ Machine Summary"])
+    tabs = st.tabs(["📊 Allocation & Output", "⚙️ Operator Ratings", "🛠️ Machine Summary", "🔎 Fuzzy Mapping"])
 
     with tabs[0]:
         st.header("📊 Operation → Operator → Output")
@@ -193,5 +219,11 @@ if skill_file and ob_file:
         machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
         st.dataframe(machine_summary, use_container_width=True)
 
+    with tabs[3]:
+        st.header("🔎 Fuzzy Mapping (OB Operation → Skill Matrix Column)")
+        for ob_op, match in FUZZY_LIST:
+            st.write(f"**{ob_op}** → `{match}`")
+
 else:
     st.info("👈 Please upload both the Skill Matrix and Operation Bulletin files.")
+
