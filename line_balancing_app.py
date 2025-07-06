@@ -128,6 +128,15 @@ if skill_file and ob_file:
 
     result_df = pd.DataFrame(assignments)
 
+    # --- SHOW WARNING IF ANY OPERATOR IS NOT FOUND ---
+    missing_ops = result_df[result_df["ASSIGNED OPERATOR"].isin(["NO SKILLED OP", "COLUMN NOT FOUND"])]
+    if not missing_ops.empty:
+        st.warning(
+            "⚠️ **No skilled operator found for the following operations:**\n\n" +
+            "\n".join(f"- {row['OPERATION']}" for _, row in missing_ops.iterrows())
+        )
+    # -------------------------------------------------
+
     def rate(e):
         if e < 65: return 1
         if e < 75: return 2
