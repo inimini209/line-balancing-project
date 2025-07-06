@@ -5,7 +5,10 @@ from difflib import get_close_matches
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
 st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (with Fuzzy Mapping & Floaters)")
 
-def combine_similar_operations(ob_df, sam_threshold=1.0, keywords=("IRON", "PRESS")):
+def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
+    # keywords: tuple/list of grouping words
+    if keywords is None:
+        keywords = ("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
     ob_df = ob_df.copy()
     used_idx = set()
     combined_rows = []
@@ -81,15 +84,15 @@ if skill_file and ob_file:
             else:
                 FUZZY_LIST.append((op, "NO SUGGESTION"))
 
-    # Combine similar/low-SAM operations
+    # --- Combine similar/low-SAM operations, with more keywords and higher threshold ---
     ob_df, combine_map = combine_similar_operations(
-        ob_df, sam_threshold=1.0, keywords=("IRON", "PRESS")
+        ob_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
     )
 
     line_target = ob_df["TARGET"].iloc[0]
     assignments = []
     assigned_operators = set()
-    floater_candidates = set(skill_df["OPERATOR NAME"])  # All operators, for floater logic
+    floater_candidates = set(skill_df["OPERATOR NAME"])
 
     for _, row in ob_df.iterrows():
         ob_op_name = row["OPERATION DESCRIPTION"]
@@ -107,32 +110,17 @@ if skill_file and ob_file:
                 if eff_list:
                     max_eff = max(eff_list)
                     effs.append((op_row["OPERATOR NAME"], max_eff))
-            # Exclude already assigned
             effs = [t for t in effs if t[0] not in assigned_operators]
             if effs:
                 operator, efficiency = max(effs, key=lambda x: x[1])
                 assigned_operators.add(operator)
             else:
-                # FLOATER LOGIC: Assign any not-yet-used operator (even if efficiency is low/zero)
+                # Floater logic: assign any not-yet-used operator, 55% efficiency
                 available_floaters = list(floater_candidates - assigned_operators)
-                float_eff = []
-                for op_name in available_floaters:
-                    eff_list = []
-                    op_row = skill_df[skill_df["OPERATOR NAME"] == op_name]
-                    if not op_row.empty:
-                        op_row = op_row.iloc[0]
-                        for c in combined_cols:
-                            if c in skill_df.columns and not pd.isna(op_row[c]):
-                                eff_list.append(op_row[c])
-                        if eff_list:
-                            float_eff.append((op_name, max(eff_list)))
-                        else:
-                            float_eff.append((op_name, 0))
-                if float_eff:
-                    operator, efficiency = max(float_eff, key=lambda x: x[1])
+                if available_floaters:
+                    operator = available_floaters[0]
+                    efficiency = 55
                     assigned_operators.add(operator)
-                # If still none, will remain as "NO SKILLED OP", 0
-
         elif skill_col in skill_df.columns:
             candidates = skill_df[["OPERATOR NAME", skill_col]].dropna()
             candidates = candidates[~candidates["OPERATOR NAME"].isin(assigned_operators)]
@@ -142,24 +130,18 @@ if skill_file and ob_file:
                 efficiency = best[skill_col]
                 assigned_operators.add(operator)
             else:
-                # FLOATER LOGIC: Assign any not-yet-used operator, even if efficiency is low/zero
+                # Floater logic: assign any not-yet-used operator, 55% efficiency
                 available_floaters = list(floater_candidates - assigned_operators)
-                float_eff = []
-                for op_name in available_floaters:
-                    op_row = skill_df[skill_df["OPERATOR NAME"] == op_name]
-                    if not op_row.empty and not pd.isna(op_row.iloc[0][skill_col]):
-                        float_eff.append((op_name, op_row.iloc[0][skill_col]))
-                    else:
-                        float_eff.append((op_name, 0))
-                if float_eff:
-                    operator, efficiency = max(float_eff, key=lambda x: x[1])
+                if available_floaters:
+                    operator = available_floaters[0]
+                    efficiency = 55
                     assigned_operators.add(operator)
         else:
             # Still assign a floater if possible
             available_floaters = list(floater_candidates - assigned_operators)
             if available_floaters:
                 operator = available_floaters[0]
-                efficiency = 0
+                efficiency = 55
                 assigned_operators.add(operator)
 
         actual_output = (efficiency / 100) * line_target
@@ -226,4 +208,3 @@ if skill_file and ob_file:
 
 else:
     st.info("👈 Please upload both the Skill Matrix and Operation Bulletin files.")
-
