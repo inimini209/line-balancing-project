@@ -309,6 +309,7 @@ if skill_file and ob_file:
                 })
                 st.success(f"Combined {combine_selected_display} as '{custom_combine_name}' with machine type: {mtype}")
                 st.experimental_rerun()
+                st.stop()  # <--- THIS stops after rerun, eliminating the error
             else:
                 st.warning("Select at least two operations (of the same machine type) and give a name.")
 
