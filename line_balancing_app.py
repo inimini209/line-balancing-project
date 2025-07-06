@@ -4,7 +4,7 @@ from difflib import get_close_matches
 import io
 
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (Color-coded + Export)")
+st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (with Color & Custom Combos)")
 
 def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
     if keywords is None:
@@ -52,7 +52,6 @@ def clean_string(s):
             .upper())
 
 def color_eff(val):
-    """Color code for efficiency"""
     try:
         val = float(val)
     except:
@@ -102,16 +101,36 @@ if skill_file and ob_file:
             else:
                 FUZZY_LIST.append((op, "NO SUGGESTION"))
 
-    ob_df, combine_map = combine_similar_operations(
-        ob_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
-    )
+    # -- Machine/combine tab state
+    if "custom_combined" not in st.session_state:
+        st.session_state["custom_combined"] = []
+    if "ob_df_working" not in st.session_state:
+        # Start from auto-combined version, then add manual combos
+        st.session_state["ob_df_working"], combine_map = combine_similar_operations(
+            ob_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
+        )
+    else:
+        # Always start from file, then add manual combos
+        base_df, combine_map = combine_similar_operations(
+            ob_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
+        )
+        # Remove any custom combined rows if already present
+        working_df = base_df.copy()
+        for combo in st.session_state["custom_combined"]:
+            # Remove rows for all operations in combo["ops"]
+            working_df = working_df[~working_df["OPERATION DESCRIPTION"].isin(combo["ops"])]
+            # Add new combined row
+            working_df = pd.concat([working_df, pd.DataFrame([combo["row"]])], ignore_index=True)
+        st.session_state["ob_df_working"] = working_df
 
-    line_target = ob_df["TARGET"].iloc[0]
+    ob_df2 = st.session_state["ob_df_working"]
+
+    line_target = ob_df2["TARGET"].iloc[0]
     assignments = []
     assigned_operators = set()
     floater_candidates = set(skill_df["OPERATOR NAME"])
 
-    for _, row in ob_df.iterrows():
+    for _, row in ob_df2.iterrows():
         ob_op_name = row["OPERATION DESCRIPTION"]
         skill_col = OPERATION_MAP.get(ob_op_name, ob_op_name)
         machine = row["MACHINE TYPE"]
@@ -202,8 +221,6 @@ if skill_file and ob_file:
         )
         styled_df = result_df.style.applymap(color_eff, subset=["EFFICIENCY (%)"])
         st.dataframe(styled_df, use_container_width=True)
-
-        # Download button (Excel)
         out_buffer = io.BytesIO()
         result_df.to_excel(out_buffer, index=False)
         st.download_button(
@@ -233,14 +250,52 @@ if skill_file and ob_file:
 
     with tabs[2]:
         st.header("🛠️ Machine Type Summary")
-        machine_summary = ob_df["MACHINE TYPE"].value_counts().reset_index()
+        machine_summary = ob_df2["MACHINE TYPE"].value_counts().reset_index()
         machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
+        machine_summary["TOTAL MACHINES"] = machine_summary["OPERATIONS COUNT"]
         st.dataframe(machine_summary, use_container_width=True)
 
     with tabs[3]:
         st.header("🔎 Fuzzy Mapping (OB Operation → Skill Matrix Column)")
         for ob_op, match in FUZZY_LIST:
             st.write(f"**{ob_op}** → `{match}`")
+
+        st.subheader("🔄 Manually Combine Operations")
+        all_ops = ob_df2["OPERATION DESCRIPTION"].unique().tolist()
+        combine_selected = st.multiselect(
+            "Select operations to combine (hold Ctrl/Cmd to select multiple):",
+            options=all_ops,
+            key="combine_ops"
+        )
+        custom_combine_name = st.text_input(
+            "Give a name to this combined operation (e.g., 'CUSTOM COMBO 1')",
+            key="combine_name"
+        )
+        if st.button("Combine Selected Operations"):
+            if len(combine_selected) > 1 and custom_combine_name:
+                mtypes = ob_df2[ob_df2["OPERATION DESCRIPTION"].isin(combine_selected)]["MACHINE TYPE"].unique()
+                if len(mtypes) == 1:
+                    mtype = mtypes[0]
+                else:
+                    mtype = ", ".join(mtypes)
+                target = ob_df2[ob_df2["OPERATION DESCRIPTION"].isin(combine_selected)]["TARGET"].iloc[0]
+                sam_machine = ob_df2[ob_df2["OPERATION DESCRIPTION"].isin(combine_selected)]["MACHINE SAM"].sum()
+                sam_manual = ob_df2[ob_df2["OPERATION DESCRIPTION"].isin(combine_selected)]["MANUAL SAM"].sum()
+                new_row = {
+                    "OPERATION DESCRIPTION": custom_combine_name,
+                    "MACHINE SAM": sam_machine,
+                    "MANUAL SAM": sam_manual,
+                    "MACHINE TYPE": mtype,
+                    "TARGET": target
+                }
+                st.session_state["custom_combined"].append({
+                    "ops": combine_selected,
+                    "row": new_row
+                })
+                st.success(f"Combined {combine_selected} as '{custom_combine_name}' with machine type: {mtype}")
+                st.experimental_rerun()
+            else:
+                st.warning("Select at least two operations and give a name.")
 
 else:
     st.info("👈 Please upload both the Skill Matrix and Operation Bulletin files.")
