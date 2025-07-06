@@ -144,12 +144,18 @@ if skill_file and ob_file:
                 efficiency = 55
                 assigned_operators.add(operator)
 
-        actual_output = (efficiency / 100) * line_target
+        # Safe efficiency conversion!
+        try:
+            eff_float = float(efficiency)
+        except Exception:
+            eff_float = 0
+        actual_output = (eff_float / 100) * line_target
+
         assignments.append({
             "OPERATION":         ob_op_name,
             "MACHINE TYPE":      machine,
             "ASSIGNED OPERATOR": operator,
-            "EFFICIENCY (%)":    efficiency,
+            "EFFICIENCY (%)":    eff_float,
             "TARGET":            line_target,
             "ACTUAL OUTPUT":     actual_output
         })
@@ -186,25 +192,4 @@ if skill_file and ob_file:
         }).reset_index()
         op_summary["RATING"] = op_summary["EFFICIENCY (%)"].apply(rate)
         st.dataframe(
-            op_summary.rename(columns={
-                "ASSIGNED OPERATOR": "OPERATOR",
-                "TARGET":            "TOTAL TARGET",
-                "ACTUAL OUTPUT":     "TOTAL OUTPUT",
-                "EFFICIENCY (%)":    "AVG EFFICIENCY (%)"
-            }),
-            use_container_width=True
-        )
-
-    with tabs[2]:
-        st.header("🛠️ Machine Type Summary")
-        machine_summary = ob_df["MACHINE TYPE"].value_counts().reset_index()
-        machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
-        st.dataframe(machine_summary, use_container_width=True)
-
-    with tabs[3]:
-        st.header("🔎 Fuzzy Mapping (OB Operation → Skill Matrix Column)")
-        for ob_op, match in FUZZY_LIST:
-            st.write(f"**{ob_op}** → `{match}`")
-
-else:
-    st.info("👈 Please upload both the Skill Matrix and Operation Bulletin files.")
+            op_summary.re_
