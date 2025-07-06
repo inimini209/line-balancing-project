@@ -4,7 +4,7 @@ from difflib import get_close_matches
 import io
 
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (with Color & Custom Combos)")
+st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (with Custom Combine & Delete)")
 
 def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
     if keywords is None:
@@ -309,9 +309,26 @@ if skill_file and ob_file:
                 })
                 st.success(f"Combined {combine_selected_display} as '{custom_combine_name}' with machine type: {mtype}")
                 st.experimental_rerun()
-                st.stop()  # <--- THIS stops after rerun, eliminating the error
+                st.stop()
             else:
                 st.warning("Select at least two operations (of the same machine type) and give a name.")
 
+        # ---- Delete Combined Operations ----
+        if st.session_state["custom_combined"]:
+            st.subheader("🗑️ Delete a Combined Operation")
+            custom_names = [c["row"]["OPERATION DESCRIPTION"] for c in st.session_state["custom_combined"]]
+            to_delete = st.selectbox("Select a combined operation to delete:", custom_names, key="delete_combo")
+            if st.button("Delete Selected Combined Operation"):
+                idx = custom_names.index(to_delete)
+                st.session_state["custom_combined"].pop(idx)
+                st.success(f"Deleted combined operation: {to_delete}. Underlying operations will now be available for re-combining.")
+                st.experimental_rerun()
+                st.stop()
+
+        # ---- Show current operations table (after all combining) ----
+        st.markdown("### 🗒️ Current Operations List (after all combining/deletion):")
+        st.dataframe(ob_df2, use_container_width=True)
+
 else:
     st.info("👈 Please upload both the Skill Matrix and Operation Bulletin files.")
+
