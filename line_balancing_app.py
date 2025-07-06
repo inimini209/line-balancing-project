@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
+from difflib import get_close_matches
 
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App")
+st.title("🧵 Dynamic Line Balancing & Operator Efficiency Rating App (with Fuzzy Mapping)")
 
 def combine_similar_operations(ob_df, sam_threshold=1.0, keywords=("IRON", "PRESS")):
     ob_df = ob_df.copy()
@@ -36,31 +37,33 @@ def combine_similar_operations(ob_df, sam_threshold=1.0, keywords=("IRON", "PRES
     new_ob_df = pd.concat([not_combined, combined_df], ignore_index=True)
     return new_ob_df, combine_map
 
+def clean_string(s):
+    if pd.isnull(s): return ""
+    return (str(s)
+            .replace('\n', ' ')
+            .replace('\r', ' ')
+            .replace('\t', ' ')
+            .replace('  ', ' ')
+            .strip()
+            .upper())
+
 st.sidebar.header("📥 Upload Your Files")
 skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
 ob_file    = st.sidebar.file_uploader("Operation Bulletin (.xlsx)", type="xlsx")
 
 if skill_file and ob_file:
     skill_df = pd.read_excel(skill_file)
-    skill_df.columns = (
-        skill_df.columns
-        .str.replace('\n', ' ', regex=True)
-        .str.strip()
-        .str.upper()
-    )
-
     ob_df = pd.read_excel(ob_file)
-    ob_df.columns = (
-        ob_df.columns
-        .str.replace('\n', ' ', regex=True)
-        .str.strip()
-        .str.upper()
-    )
 
-    st.subheader("Skill Matrix Preview")
-    st.dataframe(skill_df.head(), use_container_width=True)
-    st.subheader("Operation Bulletin Preview (before combining)")
-    st.dataframe(ob_df.head(), use_container_width=True)
+    # Clean columns
+    skill_df.columns = [clean_string(col) for col in skill_df.columns]
+    ob_df.columns = [clean_string(col) for col in ob_df.columns]
+    ob_df["OPERATION DESCRIPTION"] = ob_df["OPERATION DESCRIPTION"].apply(clean_string)
+
+    st.subheader("Skill Matrix Columns (cleaned)")
+    st.write(skill_df.columns.tolist())
+    st.subheader("OB Operation Descriptions (cleaned)")
+    st.write(ob_df["OPERATION DESCRIPTION"].unique().tolist())
 
     required_ob = {"OPERATION DESCRIPTION", "MACHINE TYPE", "TARGET", "MACHINE SAM", "MANUAL SAM"}
     if not required_ob.issubset(ob_df.columns):
@@ -69,6 +72,19 @@ if skill_file and ob_file:
     if "OPERATOR NAME" not in skill_df.columns:
         st.error("Skill Matrix must contain column: OPERATOR NAME")
         st.stop()
+
+    # --- Build OPERATION_MAP using fuzzy matching (for operations not matching Skill Matrix columns) ---
+    skill_cols = [col for col in skill_df.columns if col != "OPERATOR NAME"]
+    ob_ops = ob_df["OPERATION DESCRIPTION"].unique()
+    OPERATION_MAP = {}
+    for op in ob_ops:
+        if op not in skill_cols:
+            suggestions = get_close_matches(op, skill_cols, n=1, cutoff=0.6)
+            if suggestions:
+                OPERATION_MAP[op] = suggestions[0]
+    if OPERATION_MAP:
+        st.info("Auto-generated OPERATION_MAP (fuzzy-matched):")
+        st.code(f"OPERATION_MAP = {OPERATION_MAP}", language="python")
 
     # --- Combine similar/low-SAM operations
     ob_df, combine_map = combine_similar_operations(
@@ -83,33 +99,35 @@ if skill_file and ob_file:
     assigned_operators = set()
 
     for _, row in ob_df.iterrows():
-        op_name = row["OPERATION DESCRIPTION"]
+        ob_op_name = row["OPERATION DESCRIPTION"]
+
+        # Use mapping if available, else the original name
+        skill_col = OPERATION_MAP.get(ob_op_name, ob_op_name)
         machine = row["MACHINE TYPE"]
 
-        # If this is a combined operation, look up best operator based on the best efficiency in any combined operation
-        if op_name in combine_map:
-            combined_cols = combine_map[op_name]
+        # If this is a combined operation, look up best operator based on the best efficiency in any combined operation (apply mapping to combined ops)
+        if ob_op_name in combine_map:
+            combined_cols = [OPERATION_MAP.get(c, c) for c in combine_map[ob_op_name]]
             effs = []
             for _, op_row in skill_df.iterrows():
                 eff_list = [op_row[c] for c in combined_cols if c in skill_df.columns and not pd.isna(op_row[c])]
                 if eff_list:
                     max_eff = max(eff_list)
                     effs.append((op_row["OPERATOR NAME"], max_eff))
-            # Exclude operators already assigned
             effs = [t for t in effs if t[0] not in assigned_operators]
             if effs:
                 operator, efficiency = max(effs, key=lambda x: x[1])
                 assigned_operators.add(operator)
             else:
                 operator, efficiency = "NO SKILLED OP", 0
-        # Else, assign normally
-        elif op_name in skill_df.columns:
-            candidates = skill_df[["OPERATOR NAME", op_name]].dropna()
+        # Else, assign normally using mapping
+        elif skill_col in skill_df.columns:
+            candidates = skill_df[["OPERATOR NAME", skill_col]].dropna()
             candidates = candidates[~candidates["OPERATOR NAME"].isin(assigned_operators)]
             if not candidates.empty:
-                best       = candidates.loc[candidates[op_name].idxmax()]
+                best       = candidates.loc[candidates[skill_col].idxmax()]
                 operator   = best["OPERATOR NAME"]
-                efficiency = best[op_name]
+                efficiency = best[skill_col]
                 assigned_operators.add(operator)
             else:
                 operator, efficiency = "NO SKILLED OP", 0
@@ -118,7 +136,7 @@ if skill_file and ob_file:
 
         actual_output = (efficiency / 100) * line_target
         assignments.append({
-            "OPERATION":         op_name,
+            "OPERATION":         ob_op_name,
             "MACHINE TYPE":      machine,
             "ASSIGNED OPERATOR": operator,
             "EFFICIENCY (%)":    efficiency,
