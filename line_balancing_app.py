@@ -4,7 +4,7 @@ from difflib import get_close_matches
 import io
 
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("Line Balancing & Operator Efficiency Rating App")
+st.title("Dynamic Line Balancing & Operator Efficiency Rating App (with Custom Combine & Delete)")
 
 def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
     if keywords is None:
@@ -212,6 +212,8 @@ if skill_file and ob_file:
         })
 
     result_df = pd.DataFrame(assignments)
+    # Add line position!
+    result_df.insert(0, "LINE POSITION", range(1, 1 + len(result_df)))
 
     def rate(e):
         if e < 65: return 1
