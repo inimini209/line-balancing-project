@@ -4,7 +4,7 @@ from difflib import get_close_matches
 import io
 
 st.set_page_config(page_title="Line Balancing Prototype", layout="wide")
-st.title("Line Balancing & Operator Allocation Prototype")
+st.title("Operator Allocation Prototype")
 
 def clean_string(s):
     if pd.isnull(s): return ""
