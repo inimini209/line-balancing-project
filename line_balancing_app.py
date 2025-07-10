@@ -94,18 +94,25 @@ if skill_file and ob_file:
     assigned_ops = []
     op_allocation = {}
 
-    # Allocate operators to highest SAM first (no repeats)
+    # Robust assignment loop!
     for idx, row in ob_sorted.iterrows():
         op_desc = row["OPERATION DESCRIPTION"]
         skill_col = OPERATION_MAP[op_desc]
-        skill_vals = skill_df[["OPERATOR NAME", skill_col]].dropna()
-        skill_vals = skill_vals[~skill_vals["OPERATOR NAME"].isin(assigned_ops)]
-        if not skill_vals.empty:
-            best = skill_vals.loc[skill_vals[skill_col].idxmax()]
-            assigned_ops.append(best["OPERATOR NAME"])
-            op_allocation[op_desc] = (best["OPERATOR NAME"], best[skill_col])
+        if skill_col in skill_df.columns:
+            skill_vals = skill_df[["OPERATOR NAME", skill_col]].dropna()
+            skill_vals = skill_vals[~skill_vals["OPERATOR NAME"].isin(assigned_ops)]
+            if not skill_vals.empty:
+                best = skill_vals.loc[skill_vals[skill_col].idxmax()]
+                assigned_ops.append(best["OPERATOR NAME"])
+                op_allocation[op_desc] = (best["OPERATOR NAME"], best[skill_col])
+            else:
+                unassigned = [op for op in operators if op not in assigned_ops]
+                if unassigned:
+                    op_allocation[op_desc] = (unassigned[0], 55)
+                    assigned_ops.append(unassigned[0])
+                else:
+                    op_allocation[op_desc] = ("NO SKILLED OP", 55)
         else:
-            # Floater logic, 55% efficiency
             unassigned = [op for op in operators if op not in assigned_ops]
             if unassigned:
                 op_allocation[op_desc] = (unassigned[0], 55)
