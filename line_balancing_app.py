@@ -4,47 +4,7 @@ from difflib import get_close_matches
 import io
 
 st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("Dynamic Line Balancing & Operator Efficiency Rating App (SAM-Prioritized Assignment)")
-
-def combine_similar_operations(ob_df, sam_threshold=2.0, keywords=None):
-    if keywords is None:
-        keywords = ("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
-    ob_df = ob_df.copy()
-    used_idx = set()
-    combined_rows = []
-    combine_map = dict()
-    max_order = ob_df["OB_ORDER"].max()
-    combo_count = 0
-    for keyword in keywords:
-        matches = ob_df[
-            ob_df["OPERATION DESCRIPTION"].str.upper().str.contains(keyword)
-            & ((ob_df["MACHINE SAM"].fillna(0) + ob_df["MANUAL SAM"].fillna(0)) < sam_threshold)
-            & (~ob_df.index.isin(used_idx))
-        ]
-        for mtype in matches["MACHINE TYPE"].unique():
-            m_matches = matches[matches["MACHINE TYPE"] == mtype]
-            if len(m_matches) > 1:
-                indices = m_matches.index
-                used_idx.update(indices)
-                combined_op_name = f"COMBINED {keyword} OPERATIONS ({mtype})"
-                target = m_matches["TARGET"].iloc[0]
-                sam_machine = m_matches["MACHINE SAM"].sum()
-                sam_manual = m_matches["MANUAL SAM"].sum()
-                combo_count += 1
-                combined_rows.append({
-                    "OPERATION DESCRIPTION": combined_op_name,
-                    "MACHINE SAM": sam_machine,
-                    "MANUAL SAM": sam_manual,
-                    "MACHINE TYPE": mtype,
-                    "TARGET": target,
-                    "OB_ORDER": max_order + combo_count
-                })
-                combine_map[combined_op_name] = m_matches["OPERATION DESCRIPTION"].tolist()
-    not_combined = ob_df[~ob_df.index.isin(used_idx)]
-    combined_df = pd.DataFrame(combined_rows)
-    new_ob_df = pd.concat([not_combined, combined_df], ignore_index=True)
-    new_ob_df = new_ob_df.sort_values("OB_ORDER").reset_index(drop=True)
-    return new_ob_df, combine_map
+st.title("Line Balancing & Operator Efficiency App (OB Sequence, User Combining Only)")
 
 def clean_string(s):
     if pd.isnull(s): return ""
@@ -72,6 +32,15 @@ def color_eff(val):
     else:
         return "background-color: #FF4040; color: white"
 
+def suggest_combinable_ops(ob_df, sam_threshold=2.0):
+    # Group by MACHINE TYPE
+    combinable = []
+    for mtype, group in ob_df.groupby("MACHINE TYPE"):
+        low_sam = group[group["MACHINE SAM"].fillna(0) + group["MANUAL SAM"].fillna(0) < sam_threshold]
+        if len(low_sam) > 1:
+            combinable.append((mtype, low_sam["OPERATION DESCRIPTION"].tolist()))
+    return combinable
+
 st.sidebar.header("Upload Your Files")
 skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
 ob_file = st.sidebar.file_uploader("Operation Bulletin (.xlsx)", type="xlsx")
@@ -80,6 +49,7 @@ if skill_file and ob_file:
     skill_df = pd.read_excel(skill_file)
     ob_df = pd.read_excel(ob_file)
 
+    # Clean headers
     skill_df.columns = [clean_string(col) for col in skill_df.columns]
     ob_df.columns = [clean_string(col) for col in ob_df.columns]
     ob_df["OPERATION DESCRIPTION"] = ob_df["OPERATION DESCRIPTION"].apply(clean_string)
@@ -92,11 +62,10 @@ if skill_file and ob_file:
         st.error("Skill Matrix must contain column: OPERATOR NAME")
         st.stop()
 
-    # Add original order for sequencing!
-    if "OB_ORDER" not in ob_df.columns:
-        ob_df = ob_df.reset_index().rename(columns={"index": "OB_ORDER"})
-    else:
-        ob_df["OB_ORDER"] = ob_df["OB_ORDER"].astype(int)
+    # Drop blanks and reset to follow OB order
+    ob_df = ob_df.dropna(how="all")
+    ob_df = ob_df.reset_index(drop=True)
+    ob_df["OB_ORDER"] = ob_df.index  # This is your sequence
 
     # Fuzzy mapping for OB → Skill Matrix
     skill_cols = [col for col in skill_df.columns if col != "OPERATOR NAME"]
@@ -115,23 +84,10 @@ if skill_file and ob_file:
     # Session state for combining/deleting
     if "custom_combined" not in st.session_state:
         st.session_state["custom_combined"] = []
-    if "auto_combined_deleted" not in st.session_state:
-        st.session_state["auto_combined_deleted"] = set()
     if "ob_df_working" not in st.session_state or st.session_state.get("reset_ob_working", False):
         ob_base_df = ob_df.copy()
-        base_df, combine_map = combine_similar_operations(
-            ob_base_df, sam_threshold=2.0, keywords=("IRON", "PRESS", "CUFF", "COLLAR", "YOKE", "LABEL")
-        )
-        # Remove deleted auto combines and restore originals
-        for del_combo in st.session_state["auto_combined_deleted"]:
-            if del_combo in combine_map:
-                base_df = base_df[base_df["OPERATION DESCRIPTION"] != del_combo]
-                orig_ops = combine_map[del_combo]
-                orig_rows = ob_base_df[ob_base_df["OPERATION DESCRIPTION"].isin(orig_ops)]
-                base_df = pd.concat([base_df, orig_rows], ignore_index=True)
-                del combine_map[del_combo]
         # Manual combine: always insert at bottom after all others!
-        working_df = base_df.copy()
+        working_df = ob_base_df.copy()
         manual_combo_count = 0
         max_order = working_df["OB_ORDER"].max() if not working_df.empty else 0
         for combo in st.session_state["custom_combined"]:
@@ -143,50 +99,26 @@ if skill_file and ob_file:
             working_df = pd.concat([working_df, pd.DataFrame([new_row])], ignore_index=True)
         working_df = working_df.sort_values("OB_ORDER").reset_index(drop=True)
         st.session_state["ob_df_working"] = working_df
-        st.session_state["combine_map"] = combine_map
         st.session_state["reset_ob_working"] = False
     else:
-        combine_map = st.session_state["combine_map"]
         working_df = st.session_state["ob_df_working"]
 
     ob_df2 = st.session_state["ob_df_working"].copy()
 
-    # --- SAM-prioritized operator allocation ---
-    ob_df2["SAM_TOTAL"] = ob_df2["MACHINE SAM"].fillna(0) + ob_df2["MANUAL SAM"].fillna(0)
-    ob_sorted = ob_df2.sort_values("SAM_TOTAL", ascending=False).reset_index(drop=True)
-
+    # Operator assignment: assign in OB order, top-to-bottom
     assignments = []
     assigned_operators = set()
     floater_candidates = set(skill_df["OPERATOR NAME"])
 
-    for _, row in ob_sorted.iterrows():
+    line_target = ob_df2["TARGET"].iloc[0]
+
+    for _, row in ob_df2.iterrows():
         ob_op_name = row["OPERATION DESCRIPTION"]
         skill_col = OPERATION_MAP.get(ob_op_name, ob_op_name)
         machine = row["MACHINE TYPE"]
         operator, efficiency = "NO SKILLED OP", 0
 
-        session_combine_map = st.session_state.get("combine_map", {})
-        if ob_op_name in session_combine_map:
-            combined_cols = [OPERATION_MAP.get(c, c) for c in session_combine_map[ob_op_name]]
-            effs = []
-            for _, op_row in skill_df.iterrows():
-                eff_list = [op_row[c] for c in combined_cols if c in skill_df.columns and not pd.isna(op_row[c])]
-                if eff_list:
-                    max_eff = max(eff_list)
-                    effs.append((op_row["OPERATOR NAME"], max_eff))
-            effs = [t for t in effs if t[0] not in assigned_operators and pd.notnull(t[1])]
-            if effs:
-                operator, efficiency = max(effs, key=lambda x: x[1])
-                assigned_operators.add(operator)
-            else:
-                available_floaters = list(floater_candidates - assigned_operators)
-                if available_floaters:
-                    operator = available_floaters[0]
-                    efficiency = 55
-                    assigned_operators.add(operator)
-                else:
-                    operator, efficiency = "NO SKILLED OP", 55
-        elif skill_col in skill_df.columns:
+        if skill_col in skill_df.columns:
             candidates = skill_df[["OPERATOR NAME", skill_col]].dropna()
             candidates = candidates[~candidates["OPERATOR NAME"].isin(assigned_operators)]
             if not candidates.empty:
@@ -226,11 +158,9 @@ if skill_file and ob_file:
             "EFFICIENCY (%)":    eff_float,
             "TARGET":            row["TARGET"],
             "ACTUAL OUTPUT":     actual_output,
-            "SAM_TOTAL":         row["SAM_TOTAL"]
         })
 
     result_df = pd.DataFrame(assignments)
-    # 3. After assignment, sort back to OB sequence for display/export
     result_df = result_df.sort_values("OB_ORDER").reset_index(drop=True)
     result_df.drop(columns="OB_ORDER", inplace=True)
 
@@ -243,7 +173,7 @@ if skill_file and ob_file:
 
     result_df["RATING"] = result_df["EFFICIENCY (%)"].apply(rate)
 
-    tabs = st.tabs(["Allocation & Output", "Operator Ratings", "Machine Summary", "Fuzzy Mapping"])
+    tabs = st.tabs(["Allocation & Output", "Operator Ratings", "Machine Summary", "Combinable Suggestions"])
 
     with tabs[0]:
         st.header("Operation → Operator → Output")
@@ -288,18 +218,13 @@ if skill_file and ob_file:
         st.header("Machine Type Summary")
         machine_summary = ob_df2["MACHINE TYPE"].value_counts().reset_index()
         machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
-
-        total_row = pd.DataFrame({
-            "MACHINE TYPE": ["TOTAL"],
-            "OPERATIONS COUNT": [machine_summary["OPERATIONS COUNT"].sum()]
-        })
-        machine_summary = pd.concat([machine_summary, total_row], ignore_index=True)
         st.dataframe(machine_summary, use_container_width=True)
 
     with tabs[3]:
-        st.header("Fuzzy Mapping (OB Operation → Skill Matrix Column)")
-        for ob_op, match in FUZZY_LIST:
-            st.write(f"**{ob_op}** → `{match}`")
+        st.header("Suggested Combinable Operations (By Machine Type & Low SAM)")
+        combinable_suggestions = suggest_combinable_ops(ob_df2)
+        for mtype, ops in combinable_suggestions:
+            st.write(f"Machine Type: {mtype} → {', '.join(ops)}")
 
         st.subheader("Manually Combine Operations (Same Machine Type Only)")
         op_options = [
@@ -368,31 +293,6 @@ if skill_file and ob_file:
                 st.success(f"Deleted combined operation: {to_delete}. Underlying operations will now be available for re-combining.")
                 st.experimental_rerun()
                 st.stop()
-
-        # ---- Delete Automatically Combined Operations ----
-        if st.session_state.get("combine_map", {}):
-            st.subheader("Delete an Automatically Combined Operation")
-            auto_names = list(st.session_state["combine_map"].keys())
-            auto_to_delete = st.selectbox("Select an auto-combined operation to delete:", auto_names, key="auto_delete_combo")
-            if st.button("Delete Selected Auto-Combined Operation"):
-                st.session_state["auto_combined_deleted"].add(auto_to_delete)
-                st.session_state["reset_ob_working"] = True
-                st.success(f"Deleted auto-combined operation: {auto_to_delete}. Underlying operations will now be available for re-combining.")
-                st.experimental_rerun()
-                st.stop()
-
-        # ---- Show which operations have been combined ----
-        if st.session_state.get("combine_map", {}):
-            st.subheader("Automatically Combined Operations (by keyword & machine type):")
-            for combo_name, ops_list in st.session_state["combine_map"].items():
-                st.markdown(f"**{combo_name}:**<br>{', '.join(ops_list)}", unsafe_allow_html=True)
-
-        if st.session_state["custom_combined"]:
-            st.subheader("Manually Combined Operations:")
-            for combo in st.session_state["custom_combined"]:
-                combined_name = combo["row"]["OPERATION DESCRIPTION"]
-                combined_ops = combo["ops"]
-                st.markdown(f"**{combined_name}:**<br>{', '.join(combined_ops)}", unsafe_allow_html=True)
 
         # ---- Show current operations table (after all combining/deletion) ----
         st.markdown("### Current Operations List (after all combining/deletion):")
