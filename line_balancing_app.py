@@ -3,8 +3,8 @@ import pandas as pd
 from difflib import get_close_matches
 import io
 
-st.set_page_config(page_title="Line Balancing & Operator Assignment (OB Order)", layout="wide")
-st.title("Line Balancing & Operator Assignment (Strict OB Order)")
+st.set_page_config(page_title="Line Balancing & Operator Assignment (Manual Only)", layout="wide")
+st.title("Line Balancing & Operator Assignment (Manual Combining Only)")
 
 def clean_string(s):
     if pd.isnull(s): return ""
@@ -32,6 +32,15 @@ def color_eff(val):
     else:
         return "background-color: #FF4040; color: white"
 
+def get_combinable_suggestions(ob_df, sam_threshold=2.0):
+    # Purely visual: returns groups of operations by machine type & low SAM
+    suggestions = []
+    for mtype, group in ob_df.groupby("MACHINE TYPE"):
+        low_sam = group[group["MACHINE SAM"].fillna(0) + group["MANUAL SAM"].fillna(0) < sam_threshold]
+        if len(low_sam) > 1:
+            suggestions.append((mtype, low_sam["OPERATION DESCRIPTION"].tolist()))
+    return suggestions
+
 st.sidebar.header("Upload Your Files")
 skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
 ob_file = st.sidebar.file_uploader("Operation Bulletin (.xlsx)", type="xlsx")
@@ -40,7 +49,6 @@ if skill_file and ob_file:
     skill_df = pd.read_excel(skill_file)
     ob_df = pd.read_excel(ob_file)
 
-    # Clean headers
     skill_df.columns = [clean_string(col) for col in skill_df.columns]
     ob_df.columns = [clean_string(col) for col in ob_df.columns]
     ob_df["OPERATION DESCRIPTION"] = ob_df["OPERATION DESCRIPTION"].apply(clean_string)
@@ -53,10 +61,9 @@ if skill_file and ob_file:
         st.error("Skill Matrix must contain column: OPERATOR NAME")
         st.stop()
 
-    # Drop blanks and reset to follow OB order
     ob_df = ob_df.dropna(how="all")
     ob_df = ob_df.reset_index(drop=True)
-    ob_df["OB_ORDER"] = ob_df.index  # This is your sequence
+    ob_df["OB_ORDER"] = ob_df.index
 
     # Fuzzy mapping for OB → Skill Matrix
     skill_cols = [col for col in skill_df.columns if col != "OPERATOR NAME"]
@@ -161,7 +168,7 @@ if skill_file and ob_file:
 
     result_df["RATING"] = result_df["EFFICIENCY (%)"].apply(rate)
 
-    tabs = st.tabs(["Allocation & Output", "Operator Ratings", "Manual Combining"])
+    tabs = st.tabs(["Allocation & Output", "Operator Ratings", "Manual Combining", "Combinable Suggestions"])
 
     with tabs[0]:
         st.header("Operation → Operator → Output")
@@ -266,6 +273,12 @@ if skill_file and ob_file:
         # ---- Show current operations table (after all combining/deletion) ----
         st.markdown("### Current Operations List (after all combining/deletion):")
         st.dataframe(ob_df2.sort_values("OB_ORDER"), use_container_width=True)
+
+    with tabs[3]:
+        st.header("Combinable Suggestions (No Operations Combined Automatically)")
+        suggestions = get_combinable_suggestions(ob_df2)
+        for mtype, ops in suggestions:
+            st.markdown(f"<b>{mtype}</b>: {', '.join(ops)}", unsafe_allow_html=True)
 
 else:
     st.info("Please upload both the Skill Matrix and Operation Bulletin files.")
