@@ -3,8 +3,8 @@ import pandas as pd
 from difflib import get_close_matches
 import io
 
-st.set_page_config(page_title="Line Balancing & Operator Assignment (Manual Only)", layout="wide")
-st.title("Line Balancing & Operator Assignment (Manual Combining Only)")
+st.set_page_config(page_title="Line Balancing Prototype", layout="wide")
+st.title("Line Balancing & Operator Allocation Prototype")
 
 def clean_string(s):
     if pd.isnull(s): return ""
@@ -32,8 +32,15 @@ def color_eff(val):
     else:
         return "background-color: #FF4040; color: white"
 
+def rate(e):
+    if e < 65: return 1
+    if e < 75: return 2
+    if e < 85: return 3
+    if e < 95: return 4
+    return 5
+
 def get_combinable_suggestions(ob_df, sam_threshold=2.0):
-    # Purely visual: returns groups of operations by machine type & low SAM
+    # Visual: group by machine type and low SAM for suggestion only
     suggestions = []
     for mtype, group in ob_df.groupby("MACHINE TYPE"):
         low_sam = group[group["MACHINE SAM"].fillna(0) + group["MANUAL SAM"].fillna(0) < sam_threshold]
@@ -63,23 +70,74 @@ if skill_file and ob_file:
 
     ob_df = ob_df.dropna(how="all")
     ob_df = ob_df.reset_index(drop=True)
-    ob_df["OB_ORDER"] = ob_df.index
+    ob_df["OB_ORDER"] = ob_df.index  # Always keep for restoring order
 
     # Fuzzy mapping for OB → Skill Matrix
     skill_cols = [col for col in skill_df.columns if col != "OPERATOR NAME"]
     ob_ops = ob_df["OPERATION DESCRIPTION"].unique()
     OPERATION_MAP = {}
-    FUZZY_LIST = []
     for op in ob_ops:
         if op not in skill_cols:
             suggestions = get_close_matches(op, skill_cols, n=1, cutoff=0.6)
             if suggestions:
                 OPERATION_MAP[op] = suggestions[0]
-                FUZZY_LIST.append((op, suggestions[0]))
             else:
-                FUZZY_LIST.append((op, "NO SUGGESTION"))
+                OPERATION_MAP[op] = op
+        else:
+            OPERATION_MAP[op] = op
 
-    # Manual combine session state
+    # -------------------------
+    # Assign operators: sort by highest SAM first, then OB order
+    ob_df["SAM_TOTAL"] = ob_df["MACHINE SAM"].fillna(0) + ob_df["MANUAL SAM"].fillna(0)
+    ob_sorted = ob_df.sort_values(by=["SAM_TOTAL", "OB_ORDER"], ascending=[False, True]).copy()
+    operators = list(skill_df["OPERATOR NAME"])
+    assigned_ops = []
+    op_allocation = {}
+
+    # Allocate operators to highest SAM first (no repeats)
+    for idx, row in ob_sorted.iterrows():
+        op_desc = row["OPERATION DESCRIPTION"]
+        skill_col = OPERATION_MAP[op_desc]
+        skill_vals = skill_df[["OPERATOR NAME", skill_col]].dropna()
+        skill_vals = skill_vals[~skill_vals["OPERATOR NAME"].isin(assigned_ops)]
+        if not skill_vals.empty:
+            best = skill_vals.loc[skill_vals[skill_col].idxmax()]
+            assigned_ops.append(best["OPERATOR NAME"])
+            op_allocation[op_desc] = (best["OPERATOR NAME"], best[skill_col])
+        else:
+            # Floater logic, 55% efficiency
+            unassigned = [op for op in operators if op not in assigned_ops]
+            if unassigned:
+                op_allocation[op_desc] = (unassigned[0], 55)
+                assigned_ops.append(unassigned[0])
+            else:
+                op_allocation[op_desc] = ("NO SKILLED OP", 55)
+
+    # Restore OB display order for table output
+    display_rows = []
+    line_target = ob_df["TARGET"].iloc[0]
+    for _, row in ob_df.sort_values("OB_ORDER").iterrows():
+        op_desc = row["OPERATION DESCRIPTION"]
+        operator, eff = op_allocation.get(op_desc, ("NO SKILLED OP", 55))
+        actual_output = (float(eff)/100) * line_target
+        display_rows.append({
+            "OPERATION": op_desc,
+            "MACHINE TYPE": row["MACHINE TYPE"],
+            "ASSIGNED OPERATOR": operator,
+            "EFFICIENCY (%)": eff,
+            "TARGET": row["TARGET"],
+            "ACTUAL OUTPUT": actual_output,
+            "RATING": rate(eff)
+        })
+    display_df = pd.DataFrame(display_rows)
+
+    # ----------- Machine Summary with Total -----------
+    machine_summary = display_df["MACHINE TYPE"].value_counts().reset_index()
+    machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
+    total_row = pd.DataFrame([{"MACHINE TYPE": "TOTAL", "OPERATIONS COUNT": machine_summary["OPERATIONS COUNT"].sum()}])
+    machine_summary = pd.concat([machine_summary, total_row], ignore_index=True)
+
+    # ----------------- Manual Combine -----------------
     if "custom_combined" not in st.session_state:
         st.session_state["custom_combined"] = []
     if "ob_df_working" not in st.session_state or st.session_state.get("reset_ob_working", False):
@@ -100,82 +158,15 @@ if skill_file and ob_file:
     else:
         working_df = st.session_state["ob_df_working"]
 
-    ob_df2 = st.session_state["ob_df_working"].copy()
-
-    # Assign operators in strict OB order
-    assignments = []
-    assigned_operators = set()
-    floater_candidates = set(skill_df["OPERATOR NAME"])
-
-    for _, row in ob_df2.iterrows():
-        ob_op_name = row["OPERATION DESCRIPTION"]
-        skill_col = OPERATION_MAP.get(ob_op_name, ob_op_name)
-        machine = row["MACHINE TYPE"]
-        operator, efficiency = "NO SKILLED OP", 0
-
-        if skill_col in skill_df.columns:
-            candidates = skill_df[["OPERATOR NAME", skill_col]].dropna()
-            candidates = candidates[~candidates["OPERATOR NAME"].isin(assigned_operators)]
-            if not candidates.empty:
-                best = candidates.loc[candidates[skill_col].idxmax()]
-                operator = best["OPERATOR NAME"]
-                efficiency = best[skill_col]
-                assigned_operators.add(operator)
-            else:
-                available_floaters = list(floater_candidates - assigned_operators)
-                if available_floaters:
-                    operator = available_floaters[0]
-                    efficiency = 55
-                    assigned_operators.add(operator)
-                else:
-                    operator, efficiency = "NO SKILLED OP", 55
-        else:
-            available_floaters = list(floater_candidates - assigned_operators)
-            if available_floaters:
-                operator = available_floaters[0]
-                efficiency = 55
-                assigned_operators.add(operator)
-            else:
-                operator, efficiency = "NO SKILLED OP", 55
-
-        try:
-            eff_float = float(efficiency)
-        except Exception:
-            eff_float = 0
-        actual_output = (eff_float / 100) * row["TARGET"]
-
-        assignments.append({
-            "OB_ORDER": row["OB_ORDER"],
-            "LINE POSITION": row["OB_ORDER"] + 1,
-            "OPERATION":         ob_op_name,
-            "MACHINE TYPE":      machine,
-            "ASSIGNED OPERATOR": operator,
-            "EFFICIENCY (%)":    eff_float,
-            "TARGET":            row["TARGET"],
-            "ACTUAL OUTPUT":     actual_output,
-        })
-
-    result_df = pd.DataFrame(assignments)
-    result_df = result_df.sort_values("OB_ORDER").reset_index(drop=True)
-    result_df.drop(columns="OB_ORDER", inplace=True)
-
-    def rate(e):
-        if e < 65: return 1
-        if e < 75: return 2
-        if e < 85: return 3
-        if e < 95: return 4
-        return 5
-
-    result_df["RATING"] = result_df["EFFICIENCY (%)"].apply(rate)
-
-    tabs = st.tabs(["Allocation & Output", "Operator Ratings", "Manual Combining", "Combinable Suggestions"])
+    # ----------------------- UI Tabs ---------------------
+    tabs = st.tabs(["Allocation & Output", "Operator Ratings", "Machine Summary", "Fuzzy Suggestions", "Manual Combine"])
 
     with tabs[0]:
-        st.header("Operation → Operator → Output")
-        styled_df = result_df.style.applymap(color_eff, subset=["EFFICIENCY (%)"])
+        st.header("Operator Allocation and Output (OB Order)")
+        styled_df = display_df.style.applymap(color_eff, subset=["EFFICIENCY (%)"])
         st.dataframe(styled_df, use_container_width=True)
         out_buffer = io.BytesIO()
-        result_df.to_excel(out_buffer, index=False)
+        display_df.to_excel(out_buffer, index=False)
         st.download_button(
             label="⬇️ Download Allocation Table as Excel",
             data=out_buffer.getvalue(),
@@ -185,7 +176,7 @@ if skill_file and ob_file:
 
     with tabs[1]:
         st.header("Operator-wise Efficiency & Rating")
-        op_summary = result_df.groupby("ASSIGNED OPERATOR", dropna=False).agg({
+        op_summary = display_df.groupby("ASSIGNED OPERATOR", dropna=False).agg({
             "TARGET":          "sum",
             "ACTUAL OUTPUT":   "sum",
             "EFFICIENCY (%)":  "mean"
@@ -202,12 +193,25 @@ if skill_file and ob_file:
         )
 
     with tabs[2]:
+        st.header("Machine Type Summary")
+        st.dataframe(machine_summary, use_container_width=True)
+
+    with tabs[3]:
+        st.header("Fuzzy Suggestions for Combinable Operations")
+        suggestions = get_combinable_suggestions(ob_df)
+        if not suggestions:
+            st.info("No combinable operations found under default suggestion logic.")
+        else:
+            for mtype, ops in suggestions:
+                st.markdown(f"<b>{mtype}</b>: {', '.join(ops)}", unsafe_allow_html=True)
+
+    with tabs[4]:
         st.header("Manually Combine Operations (Same Machine Type Only)")
         op_options = [
-            f"{op} [{mt}]" for op, mt in zip(ob_df2["OPERATION DESCRIPTION"], ob_df2["MACHINE TYPE"])
+            f"{op} [{mt}]" for op, mt in zip(working_df["OPERATION DESCRIPTION"], working_df["MACHINE TYPE"])
         ]
-        op_map = {f"{op} [{mt}]": op for op, mt in zip(ob_df2["OPERATION DESCRIPTION"], ob_df2["MACHINE TYPE"])}
-        mt_map = {f"{op} [{mt}]": mt for op, mt in zip(ob_df2["OPERATION DESCRIPTION"], ob_df2["MACHINE TYPE"])}
+        op_map = {f"{op} [{mt}]": op for op, mt in zip(working_df["OPERATION DESCRIPTION"], working_df["MACHINE TYPE"])}
+        mt_map = {f"{op} [{mt}]": mt for op, mt in zip(working_df["OPERATION DESCRIPTION"], working_df["MACHINE TYPE"])}
 
         combine_selected_display = st.multiselect(
             "Select operations to combine (must have the same machine type):",
@@ -226,16 +230,16 @@ if skill_file and ob_file:
             machine_types = {mt_map[o] for o in combine_selected_display}
             if len(machine_types) > 1:
                 valid_selection = False
-                st.error(f"⚠️ Please select operations under the same machine type only. You selected: {machine_types}")
+                st.error(f"Please select operations under the same machine type only. You selected: {machine_types}")
 
         if st.button("Combine Selected Operations"):
             if len(combine_selected) > 1 and custom_combine_name and valid_selection:
                 mtype = mt_map[combine_selected_display[0]]
-                subdf = ob_df2[ob_df2["OPERATION DESCRIPTION"].isin(combine_selected)]
+                subdf = working_df[working_df["OPERATION DESCRIPTION"].isin(combine_selected)]
                 target = subdf["TARGET"].iloc[0]
                 sam_machine = subdf["MACHINE SAM"].sum()
                 sam_manual = subdf["MANUAL SAM"].sum()
-                max_order = ob_df2["OB_ORDER"].max() if not ob_df2.empty else 0
+                max_order = working_df["OB_ORDER"].max() if not working_df.empty else 0
                 manual_combo_orders = [row["OB_ORDER"] for row in st.session_state["custom_combined"]] if st.session_state["custom_combined"] else []
                 next_manual_order = max_order + len(manual_combo_orders) + 1
                 new_row = {
@@ -272,13 +276,7 @@ if skill_file and ob_file:
 
         # ---- Show current operations table (after all combining/deletion) ----
         st.markdown("### Current Operations List (after all combining/deletion):")
-        st.dataframe(ob_df2.sort_values("OB_ORDER"), use_container_width=True)
-
-    with tabs[3]:
-        st.header("Combinable Suggestions (No Operations Combined Automatically)")
-        suggestions = get_combinable_suggestions(ob_df2)
-        for mtype, ops in suggestions:
-            st.markdown(f"<b>{mtype}</b>: {', '.join(ops)}", unsafe_allow_html=True)
+        st.dataframe(working_df.sort_values("OB_ORDER"), use_container_width=True)
 
 else:
     st.info("Please upload both the Skill Matrix and Operation Bulletin files.")
