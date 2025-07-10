@@ -3,8 +3,8 @@ import pandas as pd
 from difflib import get_close_matches
 import io
 
-st.set_page_config(page_title="Line Balancing & Operator Rating", layout="wide")
-st.title("Line Balancing & Operator Efficiency App (OB Sequence, User Combining Only)")
+st.set_page_config(page_title="Line Balancing & Operator Assignment (OB Order)", layout="wide")
+st.title("Line Balancing & Operator Assignment (Strict OB Order)")
 
 def clean_string(s):
     if pd.isnull(s): return ""
@@ -31,15 +31,6 @@ def color_eff(val):
         return "background-color: #FFB0B0"
     else:
         return "background-color: #FF4040; color: white"
-
-def suggest_combinable_ops(ob_df, sam_threshold=2.0):
-    # Group by MACHINE TYPE
-    combinable = []
-    for mtype, group in ob_df.groupby("MACHINE TYPE"):
-        low_sam = group[group["MACHINE SAM"].fillna(0) + group["MANUAL SAM"].fillna(0) < sam_threshold]
-        if len(low_sam) > 1:
-            combinable.append((mtype, low_sam["OPERATION DESCRIPTION"].tolist()))
-    return combinable
 
 st.sidebar.header("Upload Your Files")
 skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
@@ -81,12 +72,11 @@ if skill_file and ob_file:
             else:
                 FUZZY_LIST.append((op, "NO SUGGESTION"))
 
-    # Session state for combining/deleting
+    # Manual combine session state
     if "custom_combined" not in st.session_state:
         st.session_state["custom_combined"] = []
     if "ob_df_working" not in st.session_state or st.session_state.get("reset_ob_working", False):
         ob_base_df = ob_df.copy()
-        # Manual combine: always insert at bottom after all others!
         working_df = ob_base_df.copy()
         manual_combo_count = 0
         max_order = working_df["OB_ORDER"].max() if not working_df.empty else 0
@@ -105,12 +95,10 @@ if skill_file and ob_file:
 
     ob_df2 = st.session_state["ob_df_working"].copy()
 
-    # Operator assignment: assign in OB order, top-to-bottom
+    # Assign operators in strict OB order
     assignments = []
     assigned_operators = set()
     floater_candidates = set(skill_df["OPERATOR NAME"])
-
-    line_target = ob_df2["TARGET"].iloc[0]
 
     for _, row in ob_df2.iterrows():
         ob_op_name = row["OPERATION DESCRIPTION"]
@@ -173,18 +161,10 @@ if skill_file and ob_file:
 
     result_df["RATING"] = result_df["EFFICIENCY (%)"].apply(rate)
 
-    tabs = st.tabs(["Allocation & Output", "Operator Ratings", "Machine Summary", "Combinable Suggestions"])
+    tabs = st.tabs(["Allocation & Output", "Operator Ratings", "Manual Combining"])
 
     with tabs[0]:
         st.header("Operation → Operator → Output")
-        st.markdown(
-            "<small>Color key: <span style='background:#B6FFB0;'>High</span> "
-            "<span style='background:#FFFFB0;'>Medium</span> "
-            "<span style='background:#FFD580;'>Average</span> "
-            "<span style='background:#FFB0B0;'>Low</span> "
-            "<span style='background:#FF4040;color:white;'>Very Low</span></small>",
-            unsafe_allow_html=True
-        )
         styled_df = result_df.style.applymap(color_eff, subset=["EFFICIENCY (%)"])
         st.dataframe(styled_df, use_container_width=True)
         out_buffer = io.BytesIO()
@@ -215,18 +195,7 @@ if skill_file and ob_file:
         )
 
     with tabs[2]:
-        st.header("Machine Type Summary")
-        machine_summary = ob_df2["MACHINE TYPE"].value_counts().reset_index()
-        machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
-        st.dataframe(machine_summary, use_container_width=True)
-
-    with tabs[3]:
-        st.header("Suggested Combinable Operations (By Machine Type & Low SAM)")
-        combinable_suggestions = suggest_combinable_ops(ob_df2)
-        for mtype, ops in combinable_suggestions:
-            st.write(f"Machine Type: {mtype} → {', '.join(ops)}")
-
-        st.subheader("Manually Combine Operations (Same Machine Type Only)")
+        st.header("Manually Combine Operations (Same Machine Type Only)")
         op_options = [
             f"{op} [{mt}]" for op, mt in zip(ob_df2["OPERATION DESCRIPTION"], ob_df2["MACHINE TYPE"])
         ]
