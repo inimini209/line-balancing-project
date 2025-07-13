@@ -163,7 +163,13 @@ if skill_file and ob_file:
         working_df = st.session_state["ob_df_working"]
 
     # ----------------------- UI Tabs ---------------------
-    tabs = st.tabs(["Allocation & Output", "Operator Ratings", "Machine Summary", "Fuzzy Suggestions", "Manual Combine"])
+    tabs = st.tabs([
+        "Allocation & Output", 
+        "Operator Ratings", 
+        "Machine Summary", 
+        "Fuzzy Suggestions", 
+        "Manual Combine"
+    ])
 
     with tabs[0]:
         st.header("Operator Allocation and Output (OB Order)")
@@ -215,7 +221,7 @@ if skill_file and ob_file:
                 st.markdown(f"<b>{mtype}</b>: {', '.join(ops)}", unsafe_allow_html=True)
 
     with tabs[4]:
-        st.header("Manually Combine Operations (Any Machine Type)")
+        st.header("Manually Combine Operations (Multi-machine Support)")
         op_options = [
             f"{op} [{mt}]" for op, mt in zip(working_df["OPERATION DESCRIPTION"], working_df["MACHINE TYPE"])
         ]
@@ -234,15 +240,18 @@ if skill_file and ob_file:
             key="combine_name"
         )
 
+        # Multi-select for combined machine types
         unique_machine_types = sorted(list(set([mt_map[o] for o in combine_selected_display]))) if combine_selected_display else []
-        machine_type_choice = st.selectbox(
-            "Select the machine type for this combined operation:",
-            options=unique_machine_types if unique_machine_types else ["-"],
+        machine_type_choice = st.multiselect(
+            "Select machine type(s) for this combined operation:",
+            options=unique_machine_types if unique_machine_types else [],
+            default=unique_machine_types if unique_machine_types else [],
             key="combine_machine_type"
         )
+        machine_type_final = " / ".join(machine_type_choice) if machine_type_choice else "-"
 
         if st.button("Combine Selected Operations"):
-            if len(combine_selected) > 1 and custom_combine_name and machine_type_choice != "-":
+            if len(combine_selected) > 1 and custom_combine_name and machine_type_final != "-":
                 subdf = working_df[working_df["OPERATION DESCRIPTION"].isin(combine_selected)]
                 target = subdf["TARGET"].iloc[0]
                 sam_machine = subdf["MACHINE SAM"].sum()
@@ -254,7 +263,7 @@ if skill_file and ob_file:
                     "OPERATION DESCRIPTION": custom_combine_name,
                     "MACHINE SAM": sam_machine,
                     "MANUAL SAM": sam_manual,
-                    "MACHINE TYPE": machine_type_choice,
+                    "MACHINE TYPE": machine_type_final,
                     "TARGET": target,
                     "OB_ORDER": next_manual_order
                 }
@@ -263,11 +272,11 @@ if skill_file and ob_file:
                     "row": new_row
                 })
                 st.session_state["reset_ob_working"] = True
-                st.success(f"Combined {combine_selected_display} as '{custom_combine_name}' with machine type: {machine_type_choice}")
+                st.success(f"Combined {combine_selected_display} as '{custom_combine_name}' with machine types: {machine_type_final}")
                 st.experimental_rerun()
                 st.stop()
             else:
-                st.warning("Select at least two operations, give a name, and pick a machine type.")
+                st.warning("Select at least two operations, give a name, and pick at least one machine type.")
 
         if st.session_state["custom_combined"]:
             st.subheader("🗑️ Delete a Combined Operation")
