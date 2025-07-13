@@ -116,14 +116,19 @@ if skill_file and ob_file:
             else:
                 op_allocation[op_desc] = ("NO SKILLED OP", 55)
 
-    # ---- Build allocation table, now with SAM column! ----
+    # ---- Build allocation table, now with SAM column (uses OB SAM if present) ----
     display_rows = []
     line_target = ob_df["TARGET"].iloc[0]
     for _, row in ob_df.sort_values("OB_ORDER").iterrows():
         op_desc = row["OPERATION DESCRIPTION"]
         operator, eff = op_allocation.get(op_desc, ("NO SKILLED OP", 55))
         actual_output = (float(eff)/100) * line_target
-        sam = (row.get("MACHINE SAM", 0) or 0) + (row.get("MANUAL SAM", 0) or 0)
+
+        # Use OB "SAM" column if present, otherwise calculate from MACHINE SAM + MANUAL SAM
+        sam = row.get("SAM", None)
+        if sam is None or pd.isnull(sam):
+            sam = (row.get("MACHINE SAM", 0) or 0) + (row.get("MANUAL SAM", 0) or 0)
+
         display_rows.append({
             "OPERATION": op_desc,
             "MACHINE TYPE": row["MACHINE TYPE"],
