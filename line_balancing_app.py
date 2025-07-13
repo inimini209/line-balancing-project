@@ -85,15 +85,38 @@ if skill_file and ob_file:
         else:
             OPERATION_MAP[op] = op
 
-    # ---- Operator assignment in OB order ----
-    ob_sorted = ob_df.sort_values("OB_ORDER").copy()
+    # ----------------- Manual Combine -----------------
+    if "custom_combined" not in st.session_state:
+        st.session_state["custom_combined"] = []
+    if "ob_df_working" not in st.session_state or st.session_state.get("reset_ob_working", False):
+        ob_base_df = ob_df.copy()
+        working_df = ob_base_df.copy()
+        manual_combo_count = 0
+        for combo in st.session_state["custom_combined"]:
+            to_remove = combo["ops"]
+            subdf = working_df[working_df["OPERATION DESCRIPTION"].isin(to_remove)]
+            # Find the minimum OB_ORDER among the selected operations
+            min_order = subdf["OB_ORDER"].min()
+            working_df = working_df[~working_df["OPERATION DESCRIPTION"].isin(to_remove)]
+            new_row = combo["row"].copy()
+            manual_combo_count += 1
+            new_row["OB_ORDER"] = min_order
+            working_df = pd.concat([working_df, pd.DataFrame([new_row])], ignore_index=True)
+        working_df = working_df.sort_values("OB_ORDER").reset_index(drop=True)
+        st.session_state["ob_df_working"] = working_df
+        st.session_state["reset_ob_working"] = False
+    else:
+        working_df = st.session_state["ob_df_working"]
+
+    # ---- Operator assignment for working_df (so output tab always reflects current state) ----
+    working_sorted = working_df.sort_values("OB_ORDER").copy()
     operators = list(skill_df["OPERATOR NAME"])
     assigned_ops = []
     op_allocation = {}
 
-    for idx, row in ob_sorted.iterrows():
+    for idx, row in working_sorted.iterrows():
         op_desc = row["OPERATION DESCRIPTION"]
-        skill_col = OPERATION_MAP[op_desc]
+        skill_col = OPERATION_MAP.get(op_desc, op_desc)
         if skill_col in skill_df.columns:
             skill_vals = skill_df[["OPERATOR NAME", skill_col]].dropna()
             skill_vals = skill_vals[~skill_vals["OPERATOR NAME"].isin(assigned_ops)]
@@ -116,15 +139,14 @@ if skill_file and ob_file:
             else:
                 op_allocation[op_desc] = ("NO SKILLED OP", 55)
 
-    # ---- Build allocation table, now with SAM column (uses OB SAM if present) ----
+    # ---- Build allocation table from working_df ----
     display_rows = []
-    line_target = ob_df["TARGET"].iloc[0]
-    for _, row in ob_df.sort_values("OB_ORDER").iterrows():
+    line_target = working_df["TARGET"].iloc[0]
+    for _, row in working_sorted.iterrows():
         op_desc = row["OPERATION DESCRIPTION"]
         operator, eff = op_allocation.get(op_desc, ("NO SKILLED OP", 55))
         actual_output = (float(eff)/100) * line_target
 
-        # Use OB "SAM" column if present, otherwise calculate from MACHINE SAM + MANUAL SAM
         sam = row.get("SAM", None)
         if sam is None or pd.isnull(sam):
             sam = (row.get("MACHINE SAM", 0) or 0) + (row.get("MANUAL SAM", 0) or 0)
@@ -140,27 +162,6 @@ if skill_file and ob_file:
             "RATING": rate(eff)
         })
     display_df = pd.DataFrame(display_rows)
-
-    # ----------------- Manual Combine -----------------
-    if "custom_combined" not in st.session_state:
-        st.session_state["custom_combined"] = []
-    if "ob_df_working" not in st.session_state or st.session_state.get("reset_ob_working", False):
-        ob_base_df = ob_df.copy()
-        working_df = ob_base_df.copy()
-        manual_combo_count = 0
-        max_order = working_df["OB_ORDER"].max() if not working_df.empty else 0
-        for combo in st.session_state["custom_combined"]:
-            to_remove = combo["ops"]
-            working_df = working_df[~working_df["OPERATION DESCRIPTION"].isin(to_remove)]
-            new_row = combo["row"].copy()
-            manual_combo_count += 1
-            new_row["OB_ORDER"] = max_order + manual_combo_count
-            working_df = pd.concat([working_df, pd.DataFrame([new_row])], ignore_index=True)
-        working_df = working_df.sort_values("OB_ORDER").reset_index(drop=True)
-        st.session_state["ob_df_working"] = working_df
-        st.session_state["reset_ob_working"] = False
-    else:
-        working_df = st.session_state["ob_df_working"]
 
     # ----------------------- UI Tabs ---------------------
     tabs = st.tabs([
@@ -256,16 +257,15 @@ if skill_file and ob_file:
                 target = subdf["TARGET"].iloc[0]
                 sam_machine = subdf["MACHINE SAM"].sum()
                 sam_manual = subdf["MANUAL SAM"].sum()
-                max_order = working_df["OB_ORDER"].max() if not working_df.empty else 0
-                manual_combo_orders = [row["OB_ORDER"] for row in st.session_state["custom_combined"]] if st.session_state["custom_combined"] else []
-                next_manual_order = max_order + len(manual_combo_orders) + 1
+                # Place at the minimum OB_ORDER of the selected ops!
+                min_order = subdf["OB_ORDER"].min()
                 new_row = {
                     "OPERATION DESCRIPTION": custom_combine_name,
                     "MACHINE SAM": sam_machine,
                     "MANUAL SAM": sam_manual,
                     "MACHINE TYPE": machine_type_final,
                     "TARGET": target,
-                    "OB_ORDER": next_manual_order
+                    "OB_ORDER": min_order
                 }
                 st.session_state["custom_combined"].append({
                     "ops": combine_selected,
@@ -274,7 +274,6 @@ if skill_file and ob_file:
                 st.session_state["reset_ob_working"] = True
                 st.success(f"Combined {combine_selected_display} as '{custom_combine_name}' with machine types: {machine_type_final}")
                 st.experimental_rerun()
-                st.stop()
             else:
                 st.warning("Select at least two operations, give a name, and pick at least one machine type.")
 
@@ -288,7 +287,6 @@ if skill_file and ob_file:
                 st.session_state["reset_ob_working"] = True
                 st.success(f"Deleted combined operation: {to_delete}. Underlying operations will now be available for re-combining.")
                 st.experimental_rerun()
-                st.stop()
 
         st.markdown("### Current Operations List (after all combining/deletion):")
         st.dataframe(working_df.sort_values("OB_ORDER"), use_container_width=True)
