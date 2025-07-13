@@ -92,15 +92,37 @@ if skill_file and ob_file:
         ob_base_df = ob_df.copy()
         working_df = ob_base_df.copy()
         manual_combo_count = 0
+        assigned_ops_combined = []  # for tracking operators in combined ops
         for combo in st.session_state["custom_combined"]:
             to_remove = combo["ops"]
-            subdf = working_df[working_df["OPERATION DESCRIPTION"].isin(to_remove)]
-            # Find the minimum OB_ORDER among the selected operations
+            subdf = working_df[working_df["OPERATION DESCRIPTION"].isin(to_remove)].copy()
             min_order = subdf["OB_ORDER"].min()
-            working_df = working_df[~working_df["OPERATION DESCRIPTION"].isin(to_remove)]
+
+            # Find sub-operation with highest SAM
+            subdf["TOTAL_SAM"] = (subdf["MACHINE SAM"].fillna(0) + subdf["MANUAL SAM"].fillna(0))
+            idx_max_sam = subdf["TOTAL_SAM"].idxmax()
+            key_op = subdf.loc[idx_max_sam, "OPERATION DESCRIPTION"]
+            skill_col = OPERATION_MAP.get(key_op, key_op)
+            operator = "NO SKILLED OP"
+            eff = 55
+            if skill_col in skill_df.columns:
+                skill_vals = skill_df[["OPERATOR NAME", skill_col]].dropna()
+                # Don't assign a duplicate operator for combined ops
+                skill_vals = skill_vals[~skill_vals["OPERATOR NAME"].isin(assigned_ops_combined)]
+                if not skill_vals.empty:
+                    best = skill_vals.loc[skill_vals[skill_col].idxmax()]
+                    operator = best["OPERATOR NAME"]
+                    eff = best[skill_col]
+                    assigned_ops_combined.append(operator)
+            target = subdf["TARGET"].iloc[0]
+            sam_machine = subdf["MACHINE SAM"].sum()
+            sam_manual = subdf["MANUAL SAM"].sum()
             new_row = combo["row"].copy()
             manual_combo_count += 1
             new_row["OB_ORDER"] = min_order
+            new_row["ASSIGNED OPERATOR"] = operator
+            new_row["EFFICIENCY (%)"] = eff
+            working_df = working_df[~working_df["OPERATION DESCRIPTION"].isin(to_remove)]
             working_df = pd.concat([working_df, pd.DataFrame([new_row])], ignore_index=True)
         working_df = working_df.sort_values("OB_ORDER").reset_index(drop=True)
         st.session_state["ob_df_working"] = working_df
@@ -108,7 +130,7 @@ if skill_file and ob_file:
     else:
         working_df = st.session_state["ob_df_working"]
 
-    # ---- Operator assignment for working_df (so output tab always reflects current state) ----
+    # ---- Operator allocation for working_df ----
     working_sorted = working_df.sort_values("OB_ORDER").copy()
     operators = list(skill_df["OPERATOR NAME"])
     assigned_ops = []
@@ -116,6 +138,14 @@ if skill_file and ob_file:
 
     for idx, row in working_sorted.iterrows():
         op_desc = row["OPERATION DESCRIPTION"]
+        # Use pre-calculated values for combined operations
+        if "ASSIGNED OPERATOR" in row and pd.notnull(row["ASSIGNED OPERATOR"]):
+            operator = row["ASSIGNED OPERATOR"]
+            eff = row["EFFICIENCY (%)"]
+            op_allocation[op_desc] = (operator, eff)
+            if operator not in assigned_ops and operator != "NO SKILLED OP":
+                assigned_ops.append(operator)
+            continue
         skill_col = OPERATION_MAP.get(op_desc, op_desc)
         if skill_col in skill_df.columns:
             skill_vals = skill_df[["OPERATOR NAME", skill_col]].dropna()
@@ -146,11 +176,9 @@ if skill_file and ob_file:
         op_desc = row["OPERATION DESCRIPTION"]
         operator, eff = op_allocation.get(op_desc, ("NO SKILLED OP", 55))
         actual_output = (float(eff)/100) * line_target
-
         sam = row.get("SAM", None)
         if sam is None or pd.isnull(sam):
             sam = (row.get("MACHINE SAM", 0) or 0) + (row.get("MANUAL SAM", 0) or 0)
-
         display_rows.append({
             "OPERATION": op_desc,
             "MACHINE TYPE": row["MACHINE TYPE"],
@@ -253,19 +281,42 @@ if skill_file and ob_file:
 
         if st.button("Combine Selected Operations"):
             if len(combine_selected) > 1 and custom_combine_name and machine_type_final != "-":
-                subdf = working_df[working_df["OPERATION DESCRIPTION"].isin(combine_selected)]
+                subdf = working_df[working_df["OPERATION DESCRIPTION"].isin(combine_selected)].copy()
+                min_order = subdf["OB_ORDER"].min()
+
+                # Find sub-operation with highest SAM
+                subdf["TOTAL_SAM"] = (subdf["MACHINE SAM"].fillna(0) + subdf["MANUAL SAM"].fillna(0))
+                idx_max_sam = subdf["TOTAL_SAM"].idxmax()
+                key_op = subdf.loc[idx_max_sam, "OPERATION DESCRIPTION"]
+                skill_col = OPERATION_MAP.get(key_op, key_op)
+                operator = "NO SKILLED OP"
+                eff = 55
+                # Don't assign a duplicate operator for combined ops
+                if skill_col in skill_df.columns:
+                    skill_vals = skill_df[["OPERATOR NAME", skill_col]].dropna()
+                    assigned_ops_combined = []
+                    # Get already assigned in previous combines
+                    for combo in st.session_state["custom_combined"]:
+                        assigned = combo["row"].get("ASSIGNED OPERATOR", None)
+                        if assigned and assigned != "NO SKILLED OP":
+                            assigned_ops_combined.append(assigned)
+                    skill_vals = skill_vals[~skill_vals["OPERATOR NAME"].isin(assigned_ops_combined)]
+                    if not skill_vals.empty:
+                        best = skill_vals.loc[skill_vals[skill_col].idxmax()]
+                        operator = best["OPERATOR NAME"]
+                        eff = best[skill_col]
                 target = subdf["TARGET"].iloc[0]
                 sam_machine = subdf["MACHINE SAM"].sum()
                 sam_manual = subdf["MANUAL SAM"].sum()
-                # Place at the minimum OB_ORDER of the selected ops!
-                min_order = subdf["OB_ORDER"].min()
                 new_row = {
                     "OPERATION DESCRIPTION": custom_combine_name,
                     "MACHINE SAM": sam_machine,
                     "MANUAL SAM": sam_manual,
                     "MACHINE TYPE": machine_type_final,
                     "TARGET": target,
-                    "OB_ORDER": min_order
+                    "OB_ORDER": min_order,
+                    "ASSIGNED OPERATOR": operator,
+                    "EFFICIENCY (%)": eff
                 }
                 st.session_state["custom_combined"].append({
                     "ops": combine_selected,
