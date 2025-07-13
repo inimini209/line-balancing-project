@@ -141,12 +141,6 @@ if skill_file and ob_file:
         })
     display_df = pd.DataFrame(display_rows)
 
-    # ---- Machine Summary ----
-    machine_summary = display_df["MACHINE TYPE"].value_counts().reset_index()
-    machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
-    total_row = pd.DataFrame([{"MACHINE TYPE": "TOTAL", "OPERATIONS COUNT": machine_summary["OPERATIONS COUNT"].sum()}])
-    machine_summary = pd.concat([machine_summary, total_row], ignore_index=True)
-
     # ----------------- Manual Combine -----------------
     if "custom_combined" not in st.session_state:
         st.session_state["custom_combined"] = []
@@ -204,7 +198,12 @@ if skill_file and ob_file:
 
     with tabs[2]:
         st.header("Machine Type Summary")
-        st.dataframe(machine_summary, use_container_width=True)
+        # Always use the original OB for machine counting
+        orig_machine_summary = ob_df["MACHINE TYPE"].value_counts().reset_index()
+        orig_machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
+        total_row = pd.DataFrame([{"MACHINE TYPE": "TOTAL", "OPERATIONS COUNT": orig_machine_summary["OPERATIONS COUNT"].sum()}])
+        orig_machine_summary = pd.concat([orig_machine_summary, total_row], ignore_index=True)
+        st.dataframe(orig_machine_summary, use_container_width=True)
 
     with tabs[3]:
         st.header("Fuzzy Suggestions for Combinable Operations")
