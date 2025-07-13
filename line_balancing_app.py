@@ -4,7 +4,7 @@ from difflib import get_close_matches
 import io
 
 st.set_page_config(page_title="Line Balancing Prototype", layout="wide")
-st.title("Operator Allocation Prototype")
+st.title("Line Balancing & Operator Allocation Prototype")
 
 def clean_string(s):
     if pd.isnull(s): return ""
@@ -40,7 +40,6 @@ def rate(e):
     return 5
 
 def get_combinable_suggestions(ob_df, sam_threshold=2.0):
-    # Visual: group by machine type and low SAM for suggestion only
     suggestions = []
     for mtype, group in ob_df.groupby("MACHINE TYPE"):
         low_sam = group[group["MACHINE SAM"].fillna(0) + group["MANUAL SAM"].fillna(0) < sam_threshold]
@@ -70,7 +69,7 @@ if skill_file and ob_file:
 
     ob_df = ob_df.dropna(how="all")
     ob_df = ob_df.reset_index(drop=True)
-    ob_df["OB_ORDER"] = ob_df.index  # Always keep for restoring order
+    ob_df["OB_ORDER"] = ob_df.index
 
     # Fuzzy mapping for OB → Skill Matrix
     skill_cols = [col for col in skill_df.columns if col != "OPERATOR NAME"]
@@ -86,15 +85,12 @@ if skill_file and ob_file:
         else:
             OPERATION_MAP[op] = op
 
-    # -------------------------
-    # Assign operators: sort by highest SAM first, then OB order
-    ob_df["SAM_TOTAL"] = ob_df["MACHINE SAM"].fillna(0) + ob_df["MANUAL SAM"].fillna(0)
-    ob_sorted = ob_df.sort_values(by=["SAM_TOTAL", "OB_ORDER"], ascending=[False, True]).copy()
+    # ---- Operator assignment in OB order ----
+    ob_sorted = ob_df.sort_values("OB_ORDER").copy()
     operators = list(skill_df["OPERATOR NAME"])
     assigned_ops = []
     op_allocation = {}
 
-    # Robust assignment loop!
     for idx, row in ob_sorted.iterrows():
         op_desc = row["OPERATION DESCRIPTION"]
         skill_col = OPERATION_MAP[op_desc]
@@ -120,16 +116,18 @@ if skill_file and ob_file:
             else:
                 op_allocation[op_desc] = ("NO SKILLED OP", 55)
 
-    # Restore OB display order for table output
+    # ---- Build allocation table, now with SAM column! ----
     display_rows = []
     line_target = ob_df["TARGET"].iloc[0]
     for _, row in ob_df.sort_values("OB_ORDER").iterrows():
         op_desc = row["OPERATION DESCRIPTION"]
         operator, eff = op_allocation.get(op_desc, ("NO SKILLED OP", 55))
         actual_output = (float(eff)/100) * line_target
+        sam = (row.get("MACHINE SAM", 0) or 0) + (row.get("MANUAL SAM", 0) or 0)
         display_rows.append({
             "OPERATION": op_desc,
             "MACHINE TYPE": row["MACHINE TYPE"],
+            "SAM": sam,
             "ASSIGNED OPERATOR": operator,
             "EFFICIENCY (%)": eff,
             "TARGET": row["TARGET"],
@@ -138,7 +136,7 @@ if skill_file and ob_file:
         })
     display_df = pd.DataFrame(display_rows)
 
-    # ----------- Machine Summary with Total -----------
+    # ---- Machine Summary ----
     machine_summary = display_df["MACHINE TYPE"].value_counts().reset_index()
     machine_summary.columns = ["MACHINE TYPE", "OPERATIONS COUNT"]
     total_row = pd.DataFrame([{"MACHINE TYPE": "TOTAL", "OPERATIONS COUNT": machine_summary["OPERATIONS COUNT"].sum()}])
@@ -213,7 +211,7 @@ if skill_file and ob_file:
                 st.markdown(f"<b>{mtype}</b>: {', '.join(ops)}", unsafe_allow_html=True)
 
     with tabs[4]:
-        st.header("Manually Combine Operations (Same Machine Type Only)")
+        st.header("Manually Combine Operations (Any Machine Type)")
         op_options = [
             f"{op} [{mt}]" for op, mt in zip(working_df["OPERATION DESCRIPTION"], working_df["MACHINE TYPE"])
         ]
@@ -221,7 +219,7 @@ if skill_file and ob_file:
         mt_map = {f"{op} [{mt}]": mt for op, mt in zip(working_df["OPERATION DESCRIPTION"], working_df["MACHINE TYPE"])}
 
         combine_selected_display = st.multiselect(
-            "Select operations to combine (must have the same machine type):",
+            "Select operations to combine (any machine types):",
             options=op_options,
             key="combine_ops"
         )
@@ -232,16 +230,15 @@ if skill_file and ob_file:
             key="combine_name"
         )
 
-        valid_selection = True
-        if len(combine_selected_display) > 1:
-            machine_types = {mt_map[o] for o in combine_selected_display}
-            if len(machine_types) > 1:
-                valid_selection = False
-                st.error(f"Please select operations under the same machine type only. You selected: {machine_types}")
+        unique_machine_types = sorted(list(set([mt_map[o] for o in combine_selected_display]))) if combine_selected_display else []
+        machine_type_choice = st.selectbox(
+            "Select the machine type for this combined operation:",
+            options=unique_machine_types if unique_machine_types else ["-"],
+            key="combine_machine_type"
+        )
 
         if st.button("Combine Selected Operations"):
-            if len(combine_selected) > 1 and custom_combine_name and valid_selection:
-                mtype = mt_map[combine_selected_display[0]]
+            if len(combine_selected) > 1 and custom_combine_name and machine_type_choice != "-":
                 subdf = working_df[working_df["OPERATION DESCRIPTION"].isin(combine_selected)]
                 target = subdf["TARGET"].iloc[0]
                 sam_machine = subdf["MACHINE SAM"].sum()
@@ -253,7 +250,7 @@ if skill_file and ob_file:
                     "OPERATION DESCRIPTION": custom_combine_name,
                     "MACHINE SAM": sam_machine,
                     "MANUAL SAM": sam_manual,
-                    "MACHINE TYPE": mtype,
+                    "MACHINE TYPE": machine_type_choice,
                     "TARGET": target,
                     "OB_ORDER": next_manual_order
                 }
@@ -262,13 +259,12 @@ if skill_file and ob_file:
                     "row": new_row
                 })
                 st.session_state["reset_ob_working"] = True
-                st.success(f"Combined {combine_selected_display} as '{custom_combine_name}' with machine type: {mtype}")
+                st.success(f"Combined {combine_selected_display} as '{custom_combine_name}' with machine type: {machine_type_choice}")
                 st.experimental_rerun()
                 st.stop()
             else:
-                st.warning("Select at least two operations (of the same machine type) and give a name.")
+                st.warning("Select at least two operations, give a name, and pick a machine type.")
 
-        # ---- Delete Combined Operations ----
         if st.session_state["custom_combined"]:
             st.subheader("🗑️ Delete a Combined Operation")
             custom_names = [c["row"]["OPERATION DESCRIPTION"] for c in st.session_state["custom_combined"]]
@@ -281,7 +277,6 @@ if skill_file and ob_file:
                 st.experimental_rerun()
                 st.stop()
 
-        # ---- Show current operations table (after all combining/deletion) ----
         st.markdown("### Current Operations List (after all combining/deletion):")
         st.dataframe(working_df.sort_values("OB_ORDER"), use_container_width=True)
 
