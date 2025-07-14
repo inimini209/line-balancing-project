@@ -92,7 +92,6 @@ if skill_file and ob_file:
         ob_base_df = ob_df.copy()
         working_df = ob_base_df.copy()
         manual_combo_count = 0
-        assigned_ops_combined = []  # for tracking operators in combined ops
         for combo in st.session_state["custom_combined"]:
             to_remove = combo["ops"]
             subdf = working_df[working_df["OPERATION DESCRIPTION"].isin(to_remove)].copy()
@@ -107,13 +106,10 @@ if skill_file and ob_file:
             eff = 55
             if skill_col in skill_df.columns:
                 skill_vals = skill_df[["OPERATOR NAME", skill_col]].dropna()
-                # Don't assign a duplicate operator for combined ops
-                skill_vals = skill_vals[~skill_vals["OPERATOR NAME"].isin(assigned_ops_combined)]
                 if not skill_vals.empty:
                     best = skill_vals.loc[skill_vals[skill_col].idxmax()]
                     operator = best["OPERATOR NAME"]
                     eff = best[skill_col]
-                    assigned_ops_combined.append(operator)
             target = subdf["TARGET"].iloc[0]
             sam_machine = subdf["MACHINE SAM"].sum()
             sam_manual = subdf["MANUAL SAM"].sum()
@@ -132,10 +128,17 @@ if skill_file and ob_file:
 
     # ---- Operator allocation for working_df ----
     working_sorted = working_df.sort_values("OB_ORDER").copy()
-    operators = list(skill_df["OPERATOR NAME"])
-    assigned_ops = []
-    op_allocation = {}
 
+    # Build assigned_ops with all operators assigned to combined ops
+    assigned_ops = []
+    combined_assigned_ops = []
+    for idx, row in working_sorted.iterrows():
+        # For combined operations with explicit assignment:
+        if "ASSIGNED OPERATOR" in row and pd.notnull(row["ASSIGNED OPERATOR"]) and row["ASSIGNED OPERATOR"] != "NO SKILLED OP":
+            combined_assigned_ops.append(row["ASSIGNED OPERATOR"])
+    assigned_ops = combined_assigned_ops.copy()
+
+    op_allocation = {}
     for idx, row in working_sorted.iterrows():
         op_desc = row["OPERATION DESCRIPTION"]
         # Use pre-calculated values for combined operations
@@ -143,8 +146,6 @@ if skill_file and ob_file:
             operator = row["ASSIGNED OPERATOR"]
             eff = row["EFFICIENCY (%)"]
             op_allocation[op_desc] = (operator, eff)
-            if operator not in assigned_ops and operator != "NO SKILLED OP":
-                assigned_ops.append(operator)
             continue
         skill_col = OPERATION_MAP.get(op_desc, op_desc)
         if skill_col in skill_df.columns:
@@ -155,14 +156,14 @@ if skill_file and ob_file:
                 assigned_ops.append(best["OPERATOR NAME"])
                 op_allocation[op_desc] = (best["OPERATOR NAME"], best[skill_col])
             else:
-                unassigned = [op for op in operators if op not in assigned_ops]
+                unassigned = [op for op in list(skill_df["OPERATOR NAME"]) if op not in assigned_ops]
                 if unassigned:
                     op_allocation[op_desc] = (unassigned[0], 55)
                     assigned_ops.append(unassigned[0])
                 else:
                     op_allocation[op_desc] = ("NO SKILLED OP", 55)
         else:
-            unassigned = [op for op in operators if op not in assigned_ops]
+            unassigned = [op for op in list(skill_df["OPERATOR NAME"]) if op not in assigned_ops]
             if unassigned:
                 op_allocation[op_desc] = (unassigned[0], 55)
                 assigned_ops.append(unassigned[0])
@@ -291,16 +292,9 @@ if skill_file and ob_file:
                 skill_col = OPERATION_MAP.get(key_op, key_op)
                 operator = "NO SKILLED OP"
                 eff = 55
-                # Don't assign a duplicate operator for combined ops
                 if skill_col in skill_df.columns:
                     skill_vals = skill_df[["OPERATOR NAME", skill_col]].dropna()
-                    assigned_ops_combined = []
-                    # Get already assigned in previous combines
-                    for combo in st.session_state["custom_combined"]:
-                        assigned = combo["row"].get("ASSIGNED OPERATOR", None)
-                        if assigned and assigned != "NO SKILLED OP":
-                            assigned_ops_combined.append(assigned)
-                    skill_vals = skill_vals[~skill_vals["OPERATOR NAME"].isin(assigned_ops_combined)]
+                    # DO NOT exclude previously assigned operators here!
                     if not skill_vals.empty:
                         best = skill_vals.loc[skill_vals[skill_col].idxmax()]
                         operator = best["OPERATOR NAME"]
