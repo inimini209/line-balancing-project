@@ -197,7 +197,7 @@ if skill_file and ob_file:
         "Allocation & Output", 
         "Operator Ratings", 
         "Machine Summary", 
-        "Fuzzy Suggestions", 
+        "Suggestions", 
         "Manual Combine"
     ])
 
