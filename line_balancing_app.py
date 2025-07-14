@@ -39,7 +39,7 @@ def rate(e):
     if e < 95: return 4
     return 5
 
-def get_combinable_suggestions(ob_df, sam_threshold=2.0):
+def get_combinable_suggestions(ob_df, sam_threshold=1.5):
     suggestions = []
     for mtype, group in ob_df.groupby("MACHINE TYPE"):
         low_sam = group[group["MACHINE SAM"].fillna(0) + group["MANUAL SAM"].fillna(0) < sam_threshold]
