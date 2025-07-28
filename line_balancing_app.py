@@ -39,14 +39,6 @@ def rate(e):
     if e < 95: return 4
     return 5
 
-def get_combinable_suggestions(ob_df, sam_threshold=1.5):
-    suggestions = []
-    for mtype, group in ob_df.groupby("MACHINE TYPE"):
-        low_sam = group[group["MACHINE SAM"].fillna(0) + group["MANUAL SAM"].fillna(0) < sam_threshold]
-        if len(low_sam) > 1:
-            suggestions.append((mtype, low_sam["OPERATION DESCRIPTION"].tolist()))
-    return suggestions
-
 st.sidebar.header("Upload Your Files")
 skill_file = st.sidebar.file_uploader("Skill Matrix (.xlsx)", type="xlsx")
 ob_file = st.sidebar.file_uploader("Operation Bulletin (.xlsx)", type="xlsx")
@@ -197,7 +189,6 @@ if skill_file and ob_file:
         "Allocation & Output", 
         "Operator Ratings", 
         "Machine Summary", 
-        "Suggestions", 
         "Manual Combine"
     ])
 
@@ -242,15 +233,6 @@ if skill_file and ob_file:
         st.dataframe(orig_machine_summary, use_container_width=True)
 
     with tabs[3]:
-        st.header("Fuzzy Suggestions for Combinable Operations")
-        suggestions = get_combinable_suggestions(ob_df)
-        if not suggestions:
-            st.info("No combinable operations found under default suggestion logic.")
-        else:
-            for mtype, ops in suggestions:
-                st.markdown(f"<b>{mtype}</b>: {', '.join(ops)}", unsafe_allow_html=True)
-
-    with tabs[4]:
         st.header("Manually Combine Operations (Multi-machine Support)")
         op_options = [
             f"{op} [{mt}]" for op, mt in zip(working_df["OPERATION DESCRIPTION"], working_df["MACHINE TYPE"])
